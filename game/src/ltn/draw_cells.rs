@@ -62,7 +62,7 @@ pub fn draw_cells(map: &Map, neighborhood: &Neighborhood) -> (GeomBatch, Vec<Col
     // area. The grid covers the rectangular bounds of the polygon. Rather than make an enum with 3
     // cases, just assign a new index to mean "boundary."
     let boundary_marker = neighborhood.cells.len();
-    for (pt, _) in geom::PolyLine::unchecked_new(boundary_polygon.into_ring().into_points())
+    for (pt, _) in geom::PolyLine::unchecked_new(boundary_polygon.clone().into_ring().into_points())
         .step_along(Distance::meters(resolution_m / 2.0), Distance::ZERO)
     {
         // TODO Refactor helpers to transform between map-space and the grid tiles. Possibly Grid
@@ -99,6 +99,12 @@ pub fn draw_cells(map: &Map, neighborhood: &Neighborhood) -> (GeomBatch, Vec<Col
                 bounds.min_x + resolution_m * (x as f64 + 0.5),
                 bounds.min_y + resolution_m * (y as f64 + 0.5),
             );
+            // Usually this doesn't happen, but sometimes during diffusion, the colors can "leak"
+            // out at strange diagonals.
+            // TODO This is noticeably slower in debug mode, though
+            if !boundary_polygon.contains_pt(tile_center) {
+                continue;
+            }
             batch.push(
                 cell_colors[*cell_idx].alpha(0.5),
                 Polygon::rectangle_centered(
@@ -136,8 +142,6 @@ fn diffusion(grid: &mut Grid<Option<usize>>, boundary_marker: usize) -> HashSet<
         let (current_x, current_y) = grid.xy(current_idx);
         // Don't flood to diagonal neighbors. That would usually result in "leaking" out past the
         // boundary tiles when the boundary polygon isn't axis-aligned.
-        // TODO But this still does "leak" out sometimes -- the cell covering 22nd/Lynn, for
-        // example.
         for (next_x, next_y) in grid.orthogonal_neighbors(current_x, current_y) {
             let next_idx = grid.idx(next_x, next_y);
             if let Some(prev_color) = grid.data[next_idx] {
