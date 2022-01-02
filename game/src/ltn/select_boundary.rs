@@ -25,6 +25,7 @@ pub struct SelectBoundary {
     draw_outline: ToggleZoomed,
     block_to_neighborhood: BTreeMap<BlockID, NeighborhoodID>,
     frontier: BTreeSet<BlockID>,
+    current_neighborhood: NeighborhoodID,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,6 +47,8 @@ impl SelectBoundary {
             draw_outline: ToggleZoomed::empty(ctx),
             block_to_neighborhood: BTreeMap::new(),
             frontier: BTreeSet::new(),
+            // Temporary, will assign below
+            current_neighborhood: NeighborhoodID(usize::MAX),
         };
 
         ctx.loading_screen("calculate all blocks", |ctx, timer| {
@@ -73,6 +76,7 @@ impl SelectBoundary {
                 state.block_to_neighborhood.insert(id, neighborhood);
                 if initial_boundary.contains(&block.perimeter) {
                     state.selected.insert(id);
+                    state.current_neighborhood = neighborhood;
                 }
                 state.blocks.insert(id, block);
             }
@@ -138,22 +142,50 @@ impl SelectBoundary {
     // This block was in the previous frontier; its inclusion in self.selected has changed.
     fn block_changed(&mut self, ctx: &mut EventCtx, app: &App, id: BlockID) {
         let mut perimeters = self.merge_selected();
-        if perimeters.len() != 1 {
-            // We split the current neighborhood in two.
-            // TODO Figure out how to handle this. For now, don't allow and revert
+        let maybe_new_block = perimeters
+            .pop()
+            .and_then(|perim| perim.to_block(&app.primary.map));
+        if !perimeters.is_empty() || maybe_new_block.is_none() {
+            let error = if !perimeters.is_empty() {
+                "Splitting this neighborhood in two is currently unsupported"
+            } else {
+                // Why couldn't we blockify?
+                "This change broke something internal"
+            };
+            // Revert!
             if self.selected.contains(&id) {
                 self.selected.remove(&id);
             } else {
                 self.selected.insert(id);
             }
-            let label =
-                "Splitting this neighborhood in two is currently unsupported".text_widget(ctx);
+            let label = error.text_widget(ctx);
             self.panel.replace(ctx, "warning", label);
             return;
         }
 
+        if self.selected.contains(&id) {
+            // We just "stole" a block from an adjacent neighborhood
+            let old_neighborhood = self.block_to_neighborhood[&id];
+            assert_ne!(old_neighborhood, self.current_neighborhood);
+            self.block_to_neighborhood
+                .insert(id, self.current_neighborhood);
+            app.session
+                .partitioning
+                .neighborhoods
+                .get_mut(&self.current_neighborhood)
+                .unwrap()
+                .0 = maybe_new_block.unwrap();
+            // TODO We may need to recalculate the coloring of all the neighborhoods!
+
+            // Recalculate the old neighborhood now
+            // TODO We have its Perimeter and want to steal one block from it. Or more easily... we
+            // have block_to_neighborhood and all the individual blocks, so do merge_all for it.
+            // // TODO If this fails, revert everything. Getting messy, can we return a Result and
+            // make the caller handle reverting?
+        } else {
+        }
+
         let old_frontier = std::mem::take(&mut self.frontier);
-        let new_perimeter = perimeters.pop().unwrap();
         self.frontier = calculate_frontier(&new_perimeter, &self.blocks);
 
         // Redraw all of the blocks that changed
