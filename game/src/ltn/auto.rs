@@ -1,6 +1,7 @@
 //! Experiments to make a neighborhood be low-traffic by automatically placing filters to prevent all rat runs.
 
 use abstutil::Timer;
+use geom::Distance;
 use map_model::RoadID;
 use widgetry::{Choice, EventCtx};
 
@@ -124,26 +125,21 @@ fn brute_force(ctx: &EventCtx, app: &mut App, neighborhood: &Neighborhood, timer
 
 fn only_one_border(app: &mut App, neighborhood: &Neighborhood) {
     for cell in &neighborhood.cells {
-        if cell.borders.len() > 1 {
+        // Sometimes a cell's interior has two roads connecting to the same border. So let's
+        // operate on potential roads to filter, not on intersections.
+        let mut candidate_filters: Vec<(RoadID, Distance)> = Vec::new();
+        for r in cell.roads.keys() {
+            let road = app.primary.map.get_r(*r);
+            if cell.borders.contains(&road.src_i) {
+                candidate_filters.push((road.id, 0.1 * road.length()));
+            } else if cell.borders.contains(&road.dst_i) {
+                candidate_filters.push((road.id, 0.9 * road.length()));
+            }
+        }
+        if candidate_filters.len() > 1 {
             // TODO How to pick which one to leave open?
-            for i in cell.borders.iter().skip(1) {
-                // Find the road in this cell connected to this border
-                for r in cell.roads.keys() {
-                    let road = app.primary.map.get_r(*r);
-                    if road.src_i == *i {
-                        app.session
-                            .modal_filters
-                            .roads
-                            .insert(road.id, 0.1 * road.length());
-                    } else if road.dst_i == *i {
-                        app.session
-                            .modal_filters
-                            .roads
-                            .insert(road.id, 0.9 * road.length());
-                    }
-                    // Sometimes a cell has multiple roads connecing to the same border, so don't
-                    // stop looking even once we add one filter
-                }
+            for (r, dist) in candidate_filters.into_iter().skip(1) {
+                app.session.modal_filters.roads.insert(r, dist);
             }
         }
     }
