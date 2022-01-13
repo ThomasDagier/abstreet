@@ -57,7 +57,7 @@ pub fn maybe_read_binary<T: DeserializeOwned>(path: String, timer: &mut Timer) -
 }
 
 // TODO Idea: Have a wrapper type DotJSON(...) and DotBin(...) to distinguish raw path strings
-fn maybe_write_json<T: Serialize>(path: &str, obj: &T) -> Result<()> {
+pub fn maybe_write_json<T: Serialize>(path: &str, obj: &T) -> Result<()> {
     if !path.ends_with(".json") {
         panic!("write_json needs {} to end with .json", path);
     }

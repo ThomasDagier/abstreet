@@ -138,6 +138,35 @@ impl RenderCells {
         }
         batch
     }
+
+    /// Render each cell as a multipolygon. Note the coordinate system is in map-space!
+    pub fn to_polygons(self) -> Vec<geo::MultiPolygon<f64>> {
+        let grid: Grid<f64> = Grid {
+            width: self.grid.width,
+            height: self.grid.height,
+            data: self
+                .grid
+                .data
+                .into_iter()
+                .map(|maybe_cell| {
+                    maybe_cell
+                        .map(|x| x as f64)
+                        .unwrap_or(self.boundary_marker as f64)
+                })
+                .collect(),
+        };
+
+        let smooth = false;
+        let c = contour::ContourBuilder::new(grid.width as u32, grid.height as u32, smooth);
+        let thresholds: Vec<f64> = (0..self.boundary_marker + 1) // TODO +1?
+            .map(|x| x as f64)
+            .collect();
+        c.contours(&grid.data, &thresholds)
+            .unwrap()
+            .into_iter()
+            .map(|feature| feature.geometry.unwrap().value.try_into().unwrap())
+            .collect()
+    }
 }
 
 /// Returns a set of adjacent indices. The pairs are symmetric -- (x, y) and (y, x) will both be

@@ -1,4 +1,7 @@
-use geom::{Angle, ArrowCap, Distance, PolyLine};
+use anyhow::Result;
+
+use geom::{Angle, ArrowCap, Distance, PolyLine, Pt2D};
+use map_gui::tools::PopupMsg;
 use widgetry::mapspace::World;
 use widgetry::{EventCtx, GeomBatch, GfxCtx, Key, Outcome, Panel, State, TextExt, Toggle, Widget};
 
@@ -76,6 +79,10 @@ impl Viewer {
                             .hotkey(Key::A)
                             .build_def(ctx),
                     ]),
+                    ctx.style()
+                        .btn_outline
+                        .text("Export to GeoJSON")
+                        .build_def(ctx),
                 ]),
             )
             .build(ctx);
@@ -102,6 +109,17 @@ impl State<App> for Viewer {
                     self.neighborhood = Neighborhood::new(ctx, app, self.neighborhood.id);
                     self.update(ctx, app);
                     return Transition::Keep;
+                } else if x == "Export to GeoJSON" {
+                    return Transition::Push(match export_geojson(app, &self.neighborhood) {
+                        Ok(path) => PopupMsg::new_state(
+                            ctx,
+                            "Neighborhood exported",
+                            vec![format!("Neighborhood exported to {}", path)],
+                        ),
+                        Err(err) => {
+                            PopupMsg::new_state(ctx, "Export failed", vec![err.to_string()])
+                        }
+                    });
                 }
 
                 return Tab::Connectivity
@@ -234,4 +252,68 @@ fn make_world(
     world.initialize_hover(ctx);
 
     world
+}
+
+fn export_geojson(app: &App, neighborhood: &Neighborhood) -> Result<String> {
+    use geo::algorithm::map_coords::MapCoordsInplace;
+    use geo::{MultiPolygon, Polygon};
+    use geojson::{Feature, FeatureCollection, GeoJson, Geometry, Value};
+
+    let path = "neighborhood.json";
+    let render_cells = super::draw_cells::RenderCells::new(&app.primary.map, neighborhood);
+    let gps_bounds = app.primary.map.get_gps_bounds();
+    let colors = render_cells.colors.clone();
+    let mut features = Vec::new();
+    for orig_multipolygon in render_cells.to_polygons() {
+        let idx = features.len();
+        // Skip the last; it's the whole boundary
+        if idx == colors.len() {
+            continue;
+        }
+
+        // TODO There's a confusing mix of multipolygons with 1 or 2 polygons, each of which may
+        // have holes or not. Just look through each polygon, and if it's got holes, use those
+        // instead.
+        let mut polygons = Vec::new();
+        for polygon in orig_multipolygon {
+            if polygon.interiors().is_empty() {
+                polygons.push(polygon);
+            } else {
+                let (_, interiors) = polygon.into_inner();
+                for line_string in interiors {
+                    polygons.push(Polygon::new(line_string, Vec::new()));
+                }
+            }
+        }
+        let mut multipolygon = MultiPolygon(polygons);
+
+        // Transform the polygons back to WGS84
+        multipolygon.map_coords_inplace(|c| {
+            let gps = Pt2D::new(c.0, c.1).to_gps(gps_bounds);
+            (gps.x(), gps.y())
+        });
+
+        let mut feature = Feature {
+            bbox: None,
+            geometry: Some(Geometry {
+                bbox: None,
+                value: Value::from(&multipolygon),
+                foreign_members: None,
+            }),
+            id: None,
+            properties: None,
+            foreign_members: None,
+        };
+        feature.set_property("fill", colors[idx].as_hex());
+        feature.set_property("fill-opacity", 0.5);
+        features.push(feature);
+    }
+    let gj = GeoJson::FeatureCollection(FeatureCollection {
+        features,
+        bbox: None,
+        foreign_members: None,
+    });
+    // TODO This writes to local storage in the browser -- not what we want
+    abstio::maybe_write_json(path, &gj)?;
+    Ok(path.to_string())
 }
