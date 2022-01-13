@@ -271,6 +271,7 @@ fn export_geojson(app: &App, neighborhood: &Neighborhood) -> Result<String> {
             continue;
         }
 
+        /*
         // TODO There's a confusing mix of multipolygons with 1 or 2 polygons, each of which may
         // have holes or not. Just look through each polygon, and if it's got holes, use those
         // instead.
@@ -286,6 +287,8 @@ fn export_geojson(app: &App, neighborhood: &Neighborhood) -> Result<String> {
             }
         }
         let mut multipolygon = MultiPolygon(polygons);
+        */
+        let mut multipolygon = orig_multipolygon;
 
         // Transform the polygons back to WGS84
         multipolygon.map_coords_inplace(|c| {
@@ -308,6 +311,11 @@ fn export_geojson(app: &App, neighborhood: &Neighborhood) -> Result<String> {
         feature.set_property("fill-opacity", 0.5);
         features.push(feature);
     }
+
+    // Only keep some features
+    features.reverse();
+    features.truncate(5);
+
     let gj = GeoJson::FeatureCollection(FeatureCollection {
         features,
         bbox: None,
