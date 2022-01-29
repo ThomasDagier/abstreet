@@ -1,0 +1,24 @@
+bus routes : https://github.com/a-b-street/abstreet/pull/819
+             https://github.com/a-b-street/abstreet/issues/372#issuecomment-974331401
+             
+guide dev  : https://a-b-street.github.io/docs/tech/dev/index.html
+
+LANCER : cargo run --bin game -- --dev data/system/ch/geneva/maps/center.bin
+
+./import.sh --raw --map
+./import.sh --raw --map --city=ch/geneva
+
+modifier RUST_BACKTRACE dans le import.sh
+
+
+-> le soucis c'est que les gtfs sont différents
+voir : https://gtfs.org/reference/static/#agencytxt
+
+-> faut faire un gitignore pour pas tout pusher sur git
+
+-> le git: https://github.com/ThomasDagier/abstreet
+
+
+-> viewer gtfs: https://bl.ocks.org/kaezarrex/7a100491d541031b6c24
+
+-> les swiss opendata: https://opentransportdata.swiss/fr/

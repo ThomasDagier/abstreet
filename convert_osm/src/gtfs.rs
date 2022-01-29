@@ -173,6 +173,8 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         dump_kml(map);
     }
 
+    println!("{:?}", map.transit_routes);
+
     Ok(())
 }
 
