@@ -50,10 +50,11 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         route_and_shape_to_trips.insert((rec.route_id, rec.shape_id), rec.trip_id);
     }
 
+    
     // Scrape all shape data. Map from shape_id to points and the sequence number
     let mut raw_shapes: HashMap<ShapeID, Vec<(Pt2D, usize)>> = HashMap::new();
     for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/shapes.txt"))?)
-        .deserialize()
+    .deserialize()
     {
         let rec: Shape = rec?;
         let pt = LonLat::new(rec.shape_pt_lon, rec.shape_pt_lat).to_pt(&map.gps_bounds);
@@ -63,10 +64,17 @@ pub fn import(map: &mut RawMap) -> Result<()> {
             .push((pt, rec.shape_pt_sequence));
     }
 
+    //println!("{}", route_to_shapes.len());
+    //println!("{}", route_and_shape_to_trips.len());
+    //std::process::exit(0);
+
+    // TRY TO MAKE IT WORK FOR LINE 19
+
     // Build a PolyLine for every route
     let mut transit_routes = Vec::new();
     let mut route_to_shape = HashMap::new();
     for mut route in map.transit_routes.drain(..) {
+        println!("the current route : {:?}", route);
         let shape_ids = route_to_shapes.get(RouteID(route.gtfs_id.clone()));
         if shape_ids.is_empty() {
             warn!("Route {} has no shape", route.gtfs_id);
@@ -74,11 +82,13 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         }
         if shape_ids.len() > 1 {
             warn!(
-                "Route {} has several shapes, choosing one arbitrarily: {:?}",
-                route.gtfs_id, shape_ids
+                //"Route {} has several shapes, choosing one arbitrarily: {:?}",
+                //route.gtfs_id, shape_ids
+                "Route {} has {} shapes", route.gtfs_id, shape_ids.len()
             );
         }
         let shape_id = shape_ids.into_iter().next().unwrap();
+        println!("id taken from the list of shapes -> {}", shape_id.0);
         route_to_shape.insert(RouteID(route.gtfs_id.clone()), shape_id.clone());
         let mut pts = if let Some(pts) = raw_shapes.remove(shape_id) {
             pts
@@ -100,7 +110,6 @@ pub fn import(map: &mut RawMap) -> Result<()> {
             }
         }
     }
-    map.transit_routes = transit_routes;
 
     // For now, every route uses exactly one trip ID, and there's no schedule. Just pick an
     // arbitrary trip per route.
@@ -173,7 +182,14 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         dump_kml(map);
     }
 
-    println!("{:?}", map.transit_routes);
+    // print all data to see if gtfs import worked
+    map.transit_routes = transit_routes;
+    println!("Result:");
+    for lol in map.transit_routes.iter() {
+        println!("{:?}", lol);
+        println!("\n");
+    }
+    //std::process::exit(0);
 
     Ok(())
 }
@@ -203,7 +219,7 @@ struct Trip {
     trip_id: TripID,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Shape {
     shape_id: ShapeID,
     shape_pt_lat: f64,
@@ -257,3 +273,35 @@ fn dump_kml(map: &RawMap) {
         &ExtraShapes { shapes },
     );
 }
+
+
+/*
+0, 46.1761347309608, 6.13265471509219, 1, 0
+0, 46.1798668011167, 6.13839494975851, 2, 0
+0, 46.1812165041179, 6.14082938417881, 3, 0
+0, 46.1843325121451, 6.14038920968953, 4, 0
+0, 46.1868015587535, 6.14020954663268, 5, 0
+0, 46.1888227360204, 6.14303923977805, 6, 0
+0, 46.1918388161971, 6.14400043713219, 7, 0
+0, 46.1948982583221, 6.14342551535028, 8, 0
+0, 46.198144065585, 6.14316500391785, 9, 0
+0, 46.2011969392001, 6.14418010018904, 10, 0
+0, 46.2047283614253, 6.1430482229309, 11, 0
+0, 46.2031118935082, 6.14718047323842, 12, 0
+0, 46.2018622068667, 6.15281291007063, 13, 0
+0, 46.2010788067161, 6.15641515436045, 14, 0
+0, 46.2006187093576, 6.15854416158411, 15, 0
+0, 46.2000839967758, 6.16452694137718, 16, 0
+0, 46.2000093853042, 6.16768002802488, 17, 0
+0, 46.1996114557443, 6.1746689209363, 18, 0
+0, 46.1988342412615, 6.18036423983841, 19, 0
+0, 46.1982746400266, 6.18563735055693, 20, 0
+0, 46.1953646217344, 6.19247352987003, 21, 0
+0, 46.1939779562442, 6.1965518812605, 22, 0
+0, 46.1932379724497, 6.20090871038909, 23, 0
+0, 46.1924482308546, 6.20646928199856, 24, 0
+
+
+FAUT ENLEVER TOUS CES PUTAIN D'ESPACES 
+
+*/
