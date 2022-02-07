@@ -8,12 +8,12 @@ elevation_input/query
 data/player
 importer.json
 
-data/input
+#data/input
 
 data/system/at/salzburg
 data/system/br/sao_paulo
 data/system/ca/montreal
-data/system/ch/geneva
+#data/system/ch/geneva
 data/system/ch/zurich
 data/system/cz/frydek_mistek
 data/system/de/berlin
