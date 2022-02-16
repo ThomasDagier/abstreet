@@ -50,11 +50,10 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         route_and_shape_to_trips.insert((rec.route_id, rec.shape_id), rec.trip_id);
     }
 
-    
     // Scrape all shape data. Map from shape_id to points and the sequence number
     let mut raw_shapes: HashMap<ShapeID, Vec<(Pt2D, usize)>> = HashMap::new();
     for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/shapes.txt"))?)
-    .deserialize()
+        .deserialize()
     {
         let rec: Shape = rec?;
         let pt = LonLat::new(rec.shape_pt_lon, rec.shape_pt_lat).to_pt(&map.gps_bounds);
@@ -64,17 +63,10 @@ pub fn import(map: &mut RawMap) -> Result<()> {
             .push((pt, rec.shape_pt_sequence));
     }
 
-    //println!("{}", route_to_shapes.len());
-    //println!("{}", route_and_shape_to_trips.len());
-    //std::process::exit(0);
-
-    // TRY TO MAKE IT WORK FOR LINE 19
-
     // Build a PolyLine for every route
     let mut transit_routes = Vec::new();
     let mut route_to_shape = HashMap::new();
     for mut route in map.transit_routes.drain(..) {
-        println!("the current route : {:?}", route);
         let shape_ids = route_to_shapes.get(RouteID(route.gtfs_id.clone()));
         if shape_ids.is_empty() {
             warn!("Route {} has no shape", route.gtfs_id);
@@ -82,13 +74,11 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         }
         if shape_ids.len() > 1 {
             warn!(
-                //"Route {} has several shapes, choosing one arbitrarily: {:?}",
-                //route.gtfs_id, shape_ids
-                "Route {} has {} shapes", route.gtfs_id, shape_ids.len()
+                "Route {} has several shapes, choosing one arbitrarily: {:?}",
+                route.gtfs_id, shape_ids
             );
         }
         let shape_id = shape_ids.into_iter().next().unwrap();
-        println!("id taken from the list of shapes -> {}", shape_id.0);
         route_to_shape.insert(RouteID(route.gtfs_id.clone()), shape_id.clone());
         let mut pts = if let Some(pts) = raw_shapes.remove(shape_id) {
             pts
@@ -110,6 +100,7 @@ pub fn import(map: &mut RawMap) -> Result<()> {
             }
         }
     }
+    map.transit_routes = transit_routes;
 
     // For now, every route uses exactly one trip ID, and there's no schedule. Just pick an
     // arbitrary trip per route.
@@ -182,15 +173,6 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         dump_kml(map);
     }
 
-    // print all data to see if gtfs import worked
-    map.transit_routes = transit_routes;
-    println!("Result:");
-    for lol in map.transit_routes.iter() {
-        println!("{:?}", lol);
-        println!("\n");
-    }
-    //std::process::exit(0);
-
     Ok(())
 }
 
@@ -219,7 +201,7 @@ struct Trip {
     trip_id: TripID,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 struct Shape {
     shape_id: ShapeID,
     shape_pt_lat: f64,

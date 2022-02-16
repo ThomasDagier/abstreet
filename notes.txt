@@ -1,10 +1,7 @@
 POUR IMPORTER :   ./import.sh --raw --map --city=ch/geneva
-(normalement ca ne sert plus a rien d'importer sauf pour debuger l'import justement)
 
 POUR LANCER :		cargo run --bin game --release
    si ca marche pas -> cargo run --bin game -- --dev data/system/ch/geneva/maps/center.bin
-   
-   j'ai modifié le RUST_BACKTRACE à full dans import.sh pour voir toutes les erreurs
 
 LES DOCS QUI CONCERNENT LES BUS:
 	https://github.com/a-b-street/abstreet/pull/819
@@ -18,17 +15,4 @@ LES AUTRES TRUCS UTILES:
 	les opendata: https://opentransportdata.swiss/fr/
 	
 AVANCEMENT ACTUEL:
-	l'import fonctionne -> pas d'erreurs liées aux GTFS
-	par contre, les routes ne sont pas ajoutées dans la simulation
-	
-	il faut regarder dans le fichier convert_osm/src/gtfs.rs d'où vient le problème.
-	sans doute que l'importation marche mais qu'il importe rien ou quasiment rien.
-	
-	Par exemple, il veut que les routes aient un route_type = 3 alors que chez nous c'est 700 / 900
-	j'ai changé ca mais c'est possible qu'il y ait d'autres endroits qui ne jouent pas (j'ai pas encore eu le temps de regarder)
-	
-	/!\ Le code dans convert_osm/src/gtfs.rs est appelé à l'import et pas au lancement du jeu.
-	
-	Pour regarder si les lignes foncitonnes le premier truc à faire c'est de regarder le nombre de bus en bas à droite après avoir lancé le sandbox.
-	Sinon on peut checker en appuyant sur Q et en regardant dans le menu "transit routes" 
-
+	l'import fonctionne pour la plupart des bus -> voir les erreurs au moment de l'importation pour savoir pourquoi certaines lignes ne sont pas ajoutées.
