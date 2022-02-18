@@ -8,10 +8,8 @@ use map_gui::tools::{Minimap, PopupMsg};
 use map_gui::ID;
 use map_model::raw::OriginalRoad;
 use map_model::{osm, BuildingID, Map, Position};
-use sim::{
-    AgentID, BorderSpawnOverTime, CarID, IndividTrip, PersonSpec, Scenario, ScenarioGenerator,
-    SpawnOverTime, TripEndpoint, TripMode, TripPurpose, VehicleType,
-};
+use sim::{AgentID, BorderSpawnOverTime, CarID, ScenarioGenerator, SpawnOverTime, VehicleType};
+use synthpop::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
 use widgetry::{
     hotkeys, lctrl, Color, EventCtx, GeomBatch, GfxCtx, HorizontalAlignment, Image, Key, Line,
     Outcome, Panel, ScreenPt, State, Text, TextExt, VerticalAlignment, Widget,
@@ -680,7 +678,7 @@ fn make_bike_lane_scenario(map: &Map) -> ScenarioGenerator {
         start_time: Time::START_OF_DAY,
         stop_time: Time::START_OF_DAY + Duration::seconds(10.0),
         start_from_border: map.find_i_by_osm_id(osm::NodeID(3005680098)).unwrap(),
-        goal: Some(TripEndpoint::Bldg(
+        goal: Some(TripEndpoint::Building(
             map.find_b_by_osm_id(bldg(217699501)).unwrap(),
         )),
     });
@@ -1080,7 +1078,7 @@ impl TutorialState {
                                 start_lane,
                                 map.get_l(start_lane).length() * 0.8,
                             )),
-                            TripEndpoint::Bldg(goal_bldg),
+                            TripEndpoint::Building(goal_bldg),
                             TripMode::Drive,
                         )],
                     });
@@ -1095,14 +1093,14 @@ impl TutorialState {
                                     lane_near_bldg,
                                     map.get_l(lane_near_bldg).length() / 2.0,
                                 )),
-                                TripEndpoint::Bldg(goal_bldg),
+                                TripEndpoint::Building(goal_bldg),
                                 TripMode::Drive,
                             )],
                         });
                     }
                     let mut rng = app.primary.current_flags.sim_flags.make_rng();
-                    scenario.instantiate(
-                        &mut app.primary.sim,
+                    app.primary.sim.instantiate(
+                        &scenario,
                         map,
                         &mut rng,
                         &mut Timer::new("spawn trip"),

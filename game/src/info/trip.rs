@@ -5,10 +5,8 @@ use maplit::btreemap;
 use geom::{Distance, Duration, Percent, Polygon, Pt2D, UnitFmt};
 use map_gui::ID;
 use map_model::{Map, Path, PathStep, Traversable};
-use sim::{
-    AgentID, Analytics, PersonID, Problem, TripEndpoint, TripID, TripInfo, TripMode, TripPhase,
-    TripPhaseType,
-};
+use sim::{AgentID, Analytics, PersonID, Problem, TripID, TripInfo, TripPhase, TripPhaseType};
+use synthpop::{TripEndpoint, TripMode};
 use widgetry::{
     Color, ControlState, DrawWithTooltips, EventCtx, GeomBatch, Line, LinePlot, PlotOptions,
     RewriteColor, Series, Text, TextExt, Widget,
@@ -935,7 +933,7 @@ fn make_elevation(
 // (ID, center, name)
 fn endpoint(endpt: &TripEndpoint, app: &App) -> (ID, Pt2D, String) {
     match endpt {
-        TripEndpoint::Bldg(b) => {
+        TripEndpoint::Building(b) => {
             let bldg = app.primary.map.get_b(*b);
             (ID::Building(*b), bldg.label_center, bldg.address.clone())
         }

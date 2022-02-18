@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::fs::File;
 
 use anyhow::Result;
+use fs_err::File;
 use rand::SeedableRng;
 use rand_xorshift::XorShiftRng;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use geom::{GPSBounds, Polygon};
 use map_model::raw::RawMap;
 use map_model::Map;
 use popdat::od::DesireLine;
-use sim::{Scenario, TripEndpoint, TripMode};
+use synthpop::{Scenario, TrafficCounts, TripEndpoint, TripMode};
 
 use crate::configuration::ImporterConfiguration;
 use crate::utils::download;
@@ -85,7 +85,11 @@ pub async fn generate_scenario(
     );
     // Some zones have very few buildings, and people wind up with a home and workplace that're the
     // same!
-    scenario = scenario.remove_weird_schedules();
+    scenario = scenario.remove_weird_schedules(false);
+    // TODO For temporary development of the UK OD pipeline...
+    if true {
+        check_sensor_data(map, &scenario, "/home/dabreegster/sensors.json", timer);
+    }
     info!(
         "Generated background traffic scenario with {} people",
         prettyprint_usize(scenario.people.len())
@@ -99,7 +103,7 @@ pub async fn generate_scenario(
             // data imported using importer/actdev_scenarios.sh already covers them.
             let before = scenario.people.len();
             scenario.people.retain(|p| match p.trips[0].origin {
-                TripEndpoint::Bldg(b) => !study_area.contains_pt(map.get_b(b).polygon.center()),
+                TripEndpoint::Building(b) => !study_area.contains_pt(map.get_b(b).polygon.center()),
                 _ => true,
             });
             info!(
@@ -210,4 +214,31 @@ fn load_study_area(map: &Map) -> Result<Polygon> {
         bail!("study area geojson has {} polygons", list.len());
     }
     Ok(list.pop().unwrap().0)
+}
+
+fn check_sensor_data(map: &Map, scenario: &Scenario, sensor_path: &str, timer: &mut Timer) {
+    use map_model::{PathRequest, PathfinderCaching};
+
+    let requests = scenario
+        .all_trips()
+        .filter_map(|trip| {
+            if trip.mode == TripMode::Drive {
+                TripEndpoint::path_req(trip.origin, trip.destination, trip.mode, map)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let deduped = PathRequest::deduplicate(map, requests);
+    let model = TrafficCounts::from_path_requests(
+        map,
+        "the generated scenario".to_string(),
+        &deduped,
+        map.routing_params().clone(),
+        PathfinderCaching::NoCache,
+        timer,
+    );
+
+    let sensors = abstio::maybe_read_json::<TrafficCounts>(sensor_path.to_string(), timer).unwrap();
+    sensors.quickly_compare(&model);
 }

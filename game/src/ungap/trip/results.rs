@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
 
 use geom::{Circle, Distance, Duration, FindClosest, PolyLine, Polygon};
-use map_gui::tools::PopupMsg;
-use map_model::{Path, PathStep, NORMAL_LANE_THICKNESS};
-use sim::{TripEndpoint, TripMode};
+use map_gui::tools::{cmp_dist, cmp_duration, PopupMsg};
+use map_model::{DrivingSide, Path, PathStep, PathfinderCaching, NORMAL_LANE_THICKNESS};
+use synthpop::{TripEndpoint, TripMode};
 use widgetry::mapspace::{ToggleZoomed, ToggleZoomedBuilder};
 use widgetry::{
     Color, Drawable, EventCtx, GeomBatch, GfxCtx, Line, LinePlot, Outcome, Panel, PlotOptions,
@@ -12,7 +12,6 @@ use widgetry::{
 
 use super::{before_after_button, RoutingPreferences};
 use crate::app::{App, Transition};
-use crate::common::{cmp_dist, cmp_duration};
 
 /// A temporary structure that the caller should unpack and use as needed.
 pub struct BuiltRoute {
@@ -122,7 +121,10 @@ impl RouteDetails {
 
         for pair in waypoints.windows(2) {
             if let Some(path) = TripEndpoint::path_req(pair[0], pair[1], TripMode::Bike, map)
-                .and_then(|req| map.pathfind_with_params(req, &routing_params, true).ok())
+                .and_then(|req| {
+                    map.pathfind_with_params(req, &routing_params, PathfinderCaching::CacheDijkstra)
+                        .ok()
+                })
             {
                 total_distance += path.total_length();
                 total_time += path.estimate_duration(map, Some(map_model::MAX_BIKE_SPEED));
@@ -374,6 +376,12 @@ fn make_detail_widget(
         ((stats.dist_along_high_stress_roads / stats.total_distance) * 100.0).round()
     };
 
+    let unprotected_turn = if app.primary.map.get_config().driving_side == DrivingSide::Right {
+        "left"
+    } else {
+        "right"
+    };
+
     Widget::col(vec![
         Line("Route details").small_heading().into_widget(ctx),
         before_after_button(ctx, app),
@@ -418,10 +426,13 @@ fn make_detail_widget(
                 .build_widget(ctx, "traffic signals"),
         ]),
         Widget::row(vec![
-            Line("Unprotected left turns onto busy roads: ")
-                .secondary()
-                .into_widget(ctx)
-                .centered_vert(),
+            Line(format!(
+                "Unprotected {} turns onto busy roads: ",
+                unprotected_turn
+            ))
+            .secondary()
+            .into_widget(ctx)
+            .centered_vert(),
             ctx.style()
                 .btn_plain
                 .btn()

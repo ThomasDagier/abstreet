@@ -16,8 +16,8 @@ use crate::{
     CompressedMovementID, ControlStopSign, ControlTrafficSignal, DirectedRoadID, Direction,
     Intersection, IntersectionID, Lane, LaneID, LaneType, Map, MapEdits, Movement, MovementID,
     OffstreetParking, ParkingLot, ParkingLotID, Path, PathConstraints, PathRequest, PathV2,
-    Pathfinder, Position, Road, RoadID, RoutingParams, TransitRoute, TransitRouteID, TransitStop,
-    TransitStopID, Turn, TurnID, TurnType, Zone,
+    Pathfinder, PathfinderCaching, Position, Road, RoadID, RoutingParams, TransitRoute,
+    TransitRouteID, TransitStop, TransitStopID, Turn, TurnID, TurnType, Zone,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -281,6 +281,9 @@ impl Map {
 
     pub(crate) fn mut_lane(&mut self, id: LaneID) -> &mut Lane {
         &mut self.roads[id.road.0].lanes[id.offset]
+    }
+    pub(crate) fn mut_road(&mut self, id: RoadID) -> &mut Road {
+        &mut self.roads[id.0]
     }
 
     pub fn get_i(&self, id: IntersectionID) -> &Intersection {
@@ -572,7 +575,7 @@ impl Map {
         &self,
         req: PathRequest,
         params: &RoutingParams,
-        cache_custom: bool,
+        cache_custom: PathfinderCaching,
     ) -> Result<Path> {
         self.pathfind_v2_with_params(req, params, cache_custom)?
             .into_v1(self)
@@ -587,7 +590,7 @@ impl Map {
         &self,
         req: PathRequest,
         params: &RoutingParams,
-        cache_custom: bool,
+        cache_custom: PathfinderCaching,
     ) -> Result<PathV2> {
         assert!(!self.pathfinder_dirty);
         self.pathfinder
@@ -709,6 +712,13 @@ impl Map {
         self.routing_params = routing_params;
         self.pathfinder_dirty = true;
         self.recalculate_pathfinding_after_edits(timer);
+    }
+
+    /// Normally after applying edits, you must call `recalculate_pathfinding_after_edits`.
+    /// Alternatively, you can keep the old pathfinder exactly as it is. Use with caution -- the
+    /// pathfinder and the map may be out-of-sync in arbitrary ways.
+    pub fn keep_pathfinder_despite_edits(&mut self) {
+        self.pathfinder_dirty = false;
     }
 
     pub fn get_languages(&self) -> BTreeSet<&str> {
@@ -892,9 +902,7 @@ impl Map {
         self.transit_stops.clear();
         self.transit_routes.clear();
         for r in &mut self.roads {
-            for l in &mut r.lanes {
-                l.transit_stops.clear();
-            }
+            r.transit_stops.clear();
         }
     }
 }

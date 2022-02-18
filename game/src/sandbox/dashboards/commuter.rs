@@ -4,16 +4,17 @@ use maplit::hashset;
 
 use abstutil::{prettyprint_usize, Counter, MultiMap, Timer};
 use geom::{Distance, PolyLine, Polygon, Time};
-use map_gui::tools::ColorLegend;
+use map_gui::tools::{checkbox_per_mode, ColorLegend};
 use map_model::{osm, BuildingID, BuildingType, IntersectionID, LaneID, Map, RoadID, TurnType};
-use sim::{TripEndpoint, TripInfo, TripMode};
+use sim::TripInfo;
+use synthpop::{TripEndpoint, TripMode};
 use widgetry::{
     Color, Drawable, EventCtx, GeomBatch, GfxCtx, HorizontalAlignment, Key, Line, Outcome, Panel,
     RewriteColor, Slider, State, Text, TextExt, Toggle, VerticalAlignment, Widget,
 };
 
 use crate::app::{App, Transition};
-use crate::common::{checkbox_per_mode, CommonState};
+use crate::common::CommonState;
 use crate::sandbox::dashboards::DashTab;
 
 pub struct CommuterPatterns {
@@ -82,12 +83,12 @@ impl CommuterPatterns {
         let mut trips_to_block: Vec<Vec<TripInfo>> = trips_from_block.clone();
         for (_, trip) in app.primary.sim.all_trip_info() {
             let block1 = match trip.start {
-                TripEndpoint::Bldg(b) => bldg_to_block[&b],
+                TripEndpoint::Building(b) => bldg_to_block[&b],
                 TripEndpoint::Border(i) => border_to_block[&i],
                 TripEndpoint::SuddenlyAppear(_) => continue,
             };
             let block2 = match trip.end {
-                TripEndpoint::Bldg(b) => bldg_to_block[&b],
+                TripEndpoint::Building(b) => bldg_to_block[&b],
                 TripEndpoint::Border(i) => border_to_block[&i],
                 TripEndpoint::SuddenlyAppear(_) => continue,
             };
@@ -146,7 +147,7 @@ impl CommuterPatterns {
             }
             if self.filter.from_block {
                 match trip.end {
-                    TripEndpoint::Bldg(b) => {
+                    TripEndpoint::Building(b) => {
                         count.inc(self.bldg_to_block[&b]);
                     }
                     TripEndpoint::Border(i) => {
@@ -158,7 +159,7 @@ impl CommuterPatterns {
                 }
             } else {
                 match trip.start {
-                    TripEndpoint::Bldg(b) => {
+                    TripEndpoint::Building(b) => {
                         count.inc(self.bldg_to_block[&b]);
                     }
                     TripEndpoint::Border(i) => {

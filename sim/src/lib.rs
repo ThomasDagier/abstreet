@@ -27,6 +27,7 @@ use map_model::{
     BuildingID, IntersectionID, LaneID, Map, ParkingLotID, Path, PathConstraints, Position,
     TransitRouteID, TransitStopID,
 };
+use synthpop::TripEndpoint;
 
 pub use crate::render::{
     CarStatus, DrawCarInput, DrawPedCrowdInput, DrawPedestrianInput, Intent, PedCrowdLocation,
@@ -36,11 +37,7 @@ pub use crate::render::{
 pub use self::analytics::{Analytics, Problem, SlidingWindow, TripPhase};
 pub(crate) use self::events::Event;
 pub use self::events::{AlertLocation, TripPhaseType};
-pub use self::make::{
-    fork_rng, BorderSpawnOverTime, ExternalPerson, ExternalTrip, ExternalTripEndpoint, IndividTrip,
-    MapBorders, PersonSpec, Scenario, ScenarioGenerator, ScenarioModifier, SimFlags, SpawnOverTime,
-    TripEndpoint, TripPurpose,
-};
+pub use self::make::{fork_rng, BorderSpawnOverTime, ScenarioGenerator, SimFlags, SpawnOverTime};
 pub(crate) use self::make::{StartTripArgs, TripSpec};
 pub(crate) use self::mechanics::{
     DrivingSimState, IntersectionSimState, ParkingSim, ParkingSimState, WalkingSimState,
@@ -49,9 +46,11 @@ pub(crate) use self::pandemic::PandemicModel;
 pub(crate) use self::recorder::TrafficRecorder;
 pub(crate) use self::router::{ActionAtEnd, Router};
 pub(crate) use self::scheduler::{Command, Scheduler};
-pub use self::sim::{AgentProperties, AlertHandler, DelayCause, Sim, SimCallback, SimOptions};
+pub use self::sim::{
+    count_parked_cars_per_bldg, rand_dist, AgentProperties, AlertHandler, DelayCause, Sim,
+    SimCallback, SimOptions,
+};
 pub(crate) use self::transit::TransitSimState;
-pub use self::trips::TripMode;
 pub use self::trips::{CommutersVehiclesCounts, Person, PersonState, TripInfo, TripResult};
 pub(crate) use self::trips::{TripLeg, TripManager};
 
@@ -267,20 +266,6 @@ impl fmt::Display for PersonID {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct OrigPersonID(
-    #[serde(
-        serialize_with = "serialize_usize",
-        deserialize_with = "deserialize_usize"
-    )]
-    pub usize,
-    #[serde(
-        serialize_with = "serialize_usize",
-        deserialize_with = "deserialize_usize"
-    )]
-    pub usize,
-);
-
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub enum VehicleType {
     Car,
@@ -476,45 +461,15 @@ impl SidewalkSpot {
 
     // Recall sidewalks are bidirectional.
     pub fn start_at_border(i: IntersectionID, map: &Map) -> Option<SidewalkSpot> {
-        let lanes = map
-            .get_i(i)
-            .get_outgoing_lanes(map, PathConstraints::Pedestrian);
-        if !lanes.is_empty() {
-            return Some(SidewalkSpot {
-                sidewalk_pos: Position::start(lanes[0]),
-                connection: SidewalkPOI::Border(i),
-            });
-        }
-
-        map.get_i(i)
-            .get_incoming_lanes(map, PathConstraints::Pedestrian)
-            .get(0)
-            .map(|l| SidewalkSpot {
-                sidewalk_pos: Position::end(*l, map),
-                connection: SidewalkPOI::Border(i),
-            })
+        Some(SidewalkSpot {
+            sidewalk_pos: TripEndpoint::start_walking_at_border(i, map)?,
+            connection: SidewalkPOI::Border(i),
+        })
     }
 
     pub fn end_at_border(i: IntersectionID, map: &Map) -> Option<SidewalkSpot> {
-        if let Some(l) = map
-            .get_i(i)
-            .get_incoming_lanes(map, PathConstraints::Pedestrian)
-            .get(0)
-        {
-            return Some(SidewalkSpot {
-                sidewalk_pos: Position::end(*l, map),
-                connection: SidewalkPOI::Border(i),
-            });
-        }
-
-        let lanes = map
-            .get_i(i)
-            .get_outgoing_lanes(map, PathConstraints::Pedestrian);
-        if lanes.is_empty() {
-            return None;
-        }
         Some(SidewalkSpot {
-            sidewalk_pos: Position::start(lanes[0]),
+            sidewalk_pos: TripEndpoint::end_walking_at_border(i, map)?,
             connection: SidewalkPOI::Border(i),
         })
     }

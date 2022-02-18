@@ -83,7 +83,9 @@ where
     }
 }
 
-#[derive(Clone)]
+/// A counter per key
+// Be careful with PartialEq -- some entries may have an explicit 0, others not
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Counter<T: Ord + PartialEq + Clone> {
     map: BTreeMap<T, usize>,
     sum: usize,
@@ -113,6 +115,7 @@ impl<T: Ord + PartialEq + Clone> Counter<T> {
         self.add(val, 1)
     }
 
+    /// If the key is missing, returns 0
     pub fn get(&self, val: T) -> usize {
         self.map.get(&val).cloned().unwrap_or(0)
     }
@@ -166,6 +169,15 @@ impl<T: Ord + PartialEq + Clone> Counter<T> {
     }
     pub fn consume(self) -> BTreeMap<T, usize> {
         self.map
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub fn extend(&mut self, other: Counter<T>) {
+        self.map.extend(other.map);
+        self.sum += other.sum;
     }
 }
 

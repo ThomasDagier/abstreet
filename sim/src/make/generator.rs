@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use abstutil::Timer;
 use geom::{Duration, Time};
 use map_model::{IntersectionID, Map};
-
-use crate::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
+use synthpop::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
 
 // TODO This can be simplified dramatically.
 
@@ -89,7 +88,7 @@ impl ScenarioGenerator {
         }
 
         timer.stop(format!("Generating scenario {}", self.scenario_name));
-        scenario.remove_weird_schedules()
+        scenario.remove_weird_schedules(true)
     }
 
     pub fn small_run(map: &Map) -> ScenarioGenerator {
@@ -166,9 +165,9 @@ impl SpawnOverTime {
             trips: vec![IndividTrip::new(
                 depart,
                 TripPurpose::Shopping,
-                TripEndpoint::Bldg(from_bldg),
+                TripEndpoint::Building(from_bldg),
                 self.goal.unwrap_or_else(|| {
-                    TripEndpoint::Bldg(map.all_buildings().choose(rng).unwrap().id)
+                    TripEndpoint::Building(map.all_buildings().choose(rng).unwrap().id)
                 }),
                 mode,
             )],
@@ -186,7 +185,7 @@ impl BorderSpawnOverTime {
                 TripPurpose::Shopping,
                 TripEndpoint::Border(self.start_from_border),
                 self.goal.unwrap_or_else(|| {
-                    TripEndpoint::Bldg(map.all_buildings().choose(rng).unwrap().id)
+                    TripEndpoint::Building(map.all_buildings().choose(rng).unwrap().id)
                 }),
                 mode,
             )],

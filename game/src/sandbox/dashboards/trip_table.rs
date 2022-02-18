@@ -2,7 +2,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use abstutil::prettyprint_usize;
 use geom::{Duration, Polygon, Time};
-use sim::{TripEndpoint, TripID, TripMode};
+use map_gui::tools::{checkbox_per_mode, color_for_mode};
+use sim::TripID;
+use synthpop::{TripEndpoint, TripMode};
 use widgetry::table::{Col, Filter, Table};
 use widgetry::{
     Color, EventCtx, Filler, GeomBatch, GfxCtx, Line, Outcome, Panel, Stash, State, TabController,
@@ -13,7 +15,7 @@ use super::generic_trip_table::{open_trip_transition, preview_trip};
 use super::selector::RectangularSelector;
 use super::DashTab;
 use crate::app::{App, Transition};
-use crate::common::{checkbox_per_mode, cmp_duration_shorter, color_for_mode};
+use crate::common::cmp_duration_shorter;
 
 pub struct TripTable {
     tab: DashTab,

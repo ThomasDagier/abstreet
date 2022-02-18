@@ -16,17 +16,21 @@ use map_model::{
     BuildingID, IntersectionID, LaneID, Map, ParkingLotID, Path, PathConstraints, PathRequest,
     Position, TransitRoute, Traversable,
 };
+use synthpop::OrigPersonID;
 
 pub use self::queries::{AgentProperties, DelayCause};
+// TODO Super weird for both of these to wind up here
+pub use self::scenario::{count_parked_cars_per_bldg, rand_dist};
 use crate::{
     AgentID, AlertLocation, Analytics, CarID, Command, CreateCar, DrivingSimState, Event,
-    IntersectionSimState, OrigPersonID, PandemicModel, ParkedCar, ParkingSim, ParkingSimState,
-    ParkingSpot, Person, PersonID, Router, Scheduler, SidewalkPOI, SidewalkSpot, StartTripArgs,
-    TrafficRecorder, TransitSimState, TripID, TripInfo, TripManager, TripPhaseType, Vehicle,
-    VehicleSpec, VehicleType, WalkingSimState, BUS_LENGTH, LIGHT_RAIL_LENGTH, MIN_CAR_LENGTH,
+    IntersectionSimState, PandemicModel, ParkedCar, ParkingSim, ParkingSimState, ParkingSpot,
+    Person, PersonID, Router, Scheduler, SidewalkPOI, SidewalkSpot, StartTripArgs, TrafficRecorder,
+    TransitSimState, TripID, TripInfo, TripManager, TripPhaseType, Vehicle, VehicleSpec,
+    VehicleType, WalkingSimState, BUS_LENGTH, LIGHT_RAIL_LENGTH, MIN_CAR_LENGTH,
 };
 
 mod queries;
+mod scenario;
 
 // TODO Do something else.
 const BLIND_RETRY_TO_SPAWN: Duration = Duration::const_seconds(5.0);

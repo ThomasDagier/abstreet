@@ -4,8 +4,11 @@ use maplit::btreeset;
 
 use abstutil::prettyprint_usize;
 use geom::{Duration, Time};
-use map_gui::tools::{grey_out_map, ChooseSomething, CityPicker, PopupMsg, URLManager};
-use sim::{ScenarioModifier, SlidingWindow, TripMode};
+use map_gui::tools::{
+    checkbox_per_mode, grey_out_map, ChooseSomething, CityPicker, PopupMsg, URLManager,
+};
+use sim::SlidingWindow;
+use synthpop::{ScenarioModifier, TripMode};
 use widgetry::{
     lctrl, Choice, Color, EventCtx, GfxCtx, HorizontalAlignment, Key, Line, LinePlot, Outcome,
     Panel, PlotOptions, Series, SimpleState, Slider, Spinner, State, Text, TextExt,
@@ -13,7 +16,6 @@ use widgetry::{
 };
 
 use crate::app::{App, Transition};
-use crate::common::checkbox_per_mode;
 use crate::edit::EditMode;
 use crate::sandbox::gameplay::freeform::ChangeScenario;
 use crate::sandbox::gameplay::{GameplayMode, GameplayState};
@@ -622,7 +624,13 @@ impl DepartureSummary {
 }
 
 impl SimpleState<App> for DepartureSummary {
-    fn on_click(&mut self, ctx: &mut EventCtx, app: &mut App, x: &str, _: &Panel) -> Transition {
+    fn on_click(
+        &mut self,
+        ctx: &mut EventCtx,
+        app: &mut App,
+        x: &str,
+        _: &mut Panel,
+    ) -> Transition {
         match x {
             "close" => Transition::Pop,
             "Commuter patterns" => Transition::Replace(

@@ -4,7 +4,9 @@ use serde::Deserialize;
 use abstutil::{prettyprint_usize, Timer};
 use geom::{Duration, LonLat, Time};
 use map_model::Map;
-use sim::{ExternalPerson, ExternalTrip, ExternalTripEndpoint, Scenario, TripMode, TripPurpose};
+use synthpop::{
+    ExternalPerson, ExternalTrip, ExternalTripEndpoint, Scenario, TripMode, TripPurpose,
+};
 
 pub fn run(csv_path: String, map: String) -> Result<()> {
     let mut timer = Timer::new("import grid2demand");
@@ -20,7 +22,7 @@ pub fn run(csv_path: String, map: String) -> Result<()> {
     let skip_problems = true;
     s.people = ExternalPerson::import(&map, people, skip_problems)?;
     // Always clean up people with no-op trips (going between the same buildings)
-    s = s.remove_weird_schedules();
+    s = s.remove_weird_schedules(true);
     println!(
         "Imported {}/{} people",
         prettyprint_usize(s.people.len()),
@@ -33,7 +35,7 @@ pub fn run(csv_path: String, map: String) -> Result<()> {
 
 fn parse_trips(csv_path: String) -> Result<Vec<ExternalPerson>> {
     let mut people = Vec::new();
-    for rec in csv::Reader::from_reader(std::fs::File::open(csv_path)?).deserialize() {
+    for rec in csv::Reader::from_reader(fs_err::File::open(csv_path)?).deserialize() {
         let rec: Record = rec?;
         let mode = match rec.agent_type.as_ref() {
             "v" => TripMode::Drive,

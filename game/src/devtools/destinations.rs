@@ -2,7 +2,7 @@ use abstutil::Counter;
 use map_gui::tools::{make_heatmap, HeatmapOptions};
 use map_gui::ID;
 use map_model::{AmenityType, BuildingID};
-use sim::{Scenario, TripEndpoint};
+use synthpop::{Scenario, TripEndpoint};
 use widgetry::{
     Color, Drawable, EventCtx, GeomBatch, GfxCtx, HorizontalAlignment, Line, Outcome, Panel, State,
     Text, Toggle, VerticalAlignment, Widget,
@@ -21,7 +21,7 @@ impl PopularDestinations {
         let mut per_bldg = Counter::new();
         for p in &scenario.people {
             for trip in &p.trips {
-                if let TripEndpoint::Bldg(b) = trip.destination {
+                if let TripEndpoint::Building(b) = trip.destination {
                     per_bldg.inc(b);
                 }
             }

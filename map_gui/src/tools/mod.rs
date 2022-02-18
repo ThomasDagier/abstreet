@@ -1,7 +1,10 @@
 //! Assorted tools and UI states that're useful for applications built to display maps.
 
+use std::collections::BTreeSet;
+
 use abstio::MapName;
 use geom::Polygon;
+use map_model::{IntersectionID, Map, RoadID};
 use widgetry::{lctrl, EventCtx, GfxCtx, Key, Line, Text, Widget};
 
 pub use self::camera::{CameraState, DefaultMap};
@@ -13,9 +16,14 @@ pub use self::labels::DrawRoadLabels;
 pub use self::minimap::{Minimap, MinimapControls};
 pub use self::navigate::Navigator;
 pub use self::title_screen::{Executable, TitleScreen};
+pub use self::trip_files::{TripManagement, TripManagementState};
 pub use self::turn_explorer::TurnExplorer;
-pub use self::ui::{ChooseSomething, FilePicker, PopupMsg, PromptInput};
+pub use self::ui::{
+    checkbox_per_mode, cmp_count, cmp_dist, cmp_duration, color_for_mode, percentage_bar,
+    ChooseSomething, FilePicker, PopupMsg, PromptInput,
+};
 pub use self::url::URLManager;
+pub use self::waypoints::{InputWaypoints, WaypointID};
 use crate::AppLike;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,6 +36,7 @@ mod city_picker;
 mod colors;
 #[cfg(not(target_arch = "wasm32"))]
 mod command;
+pub mod compare_counts;
 mod heatmap;
 mod icons;
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,14 +45,16 @@ mod labels;
 mod minimap;
 mod navigate;
 mod title_screen;
+mod trip_files;
 mod turn_explorer;
 mod ui;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
 mod url;
+mod waypoints;
 
 // Update this ___before___ pushing the commit with "[rebuild] [release]".
-const NEXT_RELEASE: &str = "0.3.7";
+const NEXT_RELEASE: &str = "0.3.12";
 
 /// Returns the version of A/B Street to link to. When building for a release, this points to that
 /// new release. Otherwise it points to the current dev version.
@@ -81,6 +92,11 @@ pub fn grey_out_map(g: &mut GfxCtx, app: &dyn AppLike) {
 // TODO Associate this with maps, but somehow avoid reading the entire file when listing them.
 pub fn nice_map_name(name: &MapName) -> &str {
     match name.city.country.as_ref() {
+        "au" => match (name.city.city.as_ref(), name.map.as_ref()) {
+            ("melbourne", "brunswick") => "Melbourne (Brunswick)",
+            ("melbourne", "dandenong") => "Melbourne (Dandenong)",
+            _ => &name.map,
+        },
         "at" => match (name.city.city.as_ref(), name.map.as_ref()) {
             ("salzburg", "north") => "Salzburg (north)",
             ("salzburg", "south") => "Salzburg (south)",
@@ -167,19 +183,18 @@ pub fn nice_map_name(name: &MapName) -> &str {
             ("leeds", "north") => "North Leeds",
             ("leeds", "west") => "West Leeds",
             ("lockleaze", "center") => "Lockleaze",
-            ("london", "a5") => "London A5 (Hyde Park to Edgware)",
-            ("london", "bermondsey") => "Bermondsey",
             ("london", "camden") => "Camden",
             ("london", "hackney") => "Hackney",
             ("london", "kennington") => "Kennington (London)",
             ("london", "kingston_upon_thames") => "Kingston upon Thames",
-            ("london", "southbank") => "Southbank",
             ("london", "southwark") => "Southwark",
             ("long_marston", "center") => "Long Marston (Stratford)",
+            ("manchester", "levenshulme") => "Levenshulme (Manchester)",
             ("marsh_barton", "center") => "Marsh Barton",
             ("micklefield", "center") => "Micklefield",
             ("newborough_road", "center") => "Newborough Road",
             ("newcastle_great_park", "center") => "Newcastle Great Park",
+            ("newcastle_upon_tyne", "center") => "Newcastle upon Tyne",
             ("northwick_park", "center") => "Northwick Park",
             ("poundbury", "center") => "Poundbury",
             ("priors_hall", "center") => "Priors Hall",
@@ -193,6 +208,7 @@ pub fn nice_map_name(name: &MapName) -> &str {
             ("water_lane", "center") => "Water Lane",
             ("wichelstowe", "center") => "Wichelstowe",
             ("wixams", "center") => "Wixams",
+            ("wokingham", "center") => "Wokingham",
             ("wynyard", "center") => "Wynyard",
             _ => &name.map,
         },
@@ -279,6 +295,7 @@ pub fn nice_country_name(code: &str) -> &str {
     // If you add something here, please also add the flag to data/system/assets/flags.
     // https://github.com/hampusborgos/country-flags/tree/master/svg
     match code {
+        "au" => "Australia",
         "at" => "Austria",
         "br" => "Brazil",
         "ca" => "Canada",
@@ -318,7 +335,6 @@ pub fn find_exe(cmd: &str) -> String {
         "../../target/debug",
         // When running from the .zip release
         ".",
-        "..",
     ] {
         // Apparently std::path on Windows doesn't do any of this correction. We could build up a
         // PathBuf properly, I guess
@@ -327,8 +343,7 @@ pub fn find_exe(cmd: &str) -> String {
         } else {
             format!("{}/{}", dir, cmd)
         };
-        use std::fs::metadata;
-        if let Ok(metadata) = metadata(&path) {
+        if let Ok(metadata) = fs_err::metadata(&path) {
             if metadata.is_file() {
                 return path;
             } else {
@@ -373,4 +388,20 @@ pub fn app_header(ctx: &EventCtx, app: &dyn AppLike, title: &str) -> Widget {
         ]),
         change_map_btn(ctx, app),
     ])
+}
+
+pub fn intersections_from_roads(roads: &BTreeSet<RoadID>, map: &Map) -> BTreeSet<IntersectionID> {
+    let mut results = BTreeSet::new();
+    for r in roads {
+        let r = map.get_r(*r);
+        for i in [r.src_i, r.dst_i] {
+            if results.contains(&i) {
+                continue;
+            }
+            if map.get_i(i).roads.iter().all(|r| roads.contains(r)) {
+                results.insert(i);
+            }
+        }
+    }
+    results
 }

@@ -699,6 +699,7 @@ fn fix_building_driveways(map: &mut Map, input: Vec<BuildingID>, effects: &mut E
         match sidewalk_pts.remove(&bldg_center).and_then(|pos| {
             Line::new(bldg_center.to_pt2d(), pos.pt(map))
                 .map(|l| (pos, trim_path(&map.get_b(id).polygon, l)))
+                .ok()
         }) {
             Some((sidewalk_pos, driveway_geom)) => {
                 let b = &mut map.buildings[id.0];
@@ -904,7 +905,7 @@ impl Map {
         // Might need to update bus stops.
         if enforce_valid {
             for id in &effects.changed_roads {
-                let stops = self.get_r(*id).all_transit_stops();
+                let stops = self.get_r(*id).transit_stops.clone();
                 for s in stops {
                     let sidewalk_pos = self.get_ts(s).sidewalk_pos;
                     // Must exist, because we aren't allowed to orphan a bus stop.

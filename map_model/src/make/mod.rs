@@ -1,7 +1,7 @@
 //! See <https://a-b-street.github.io/docs/tech/map/importing/index.html> for an overview. This module
 //! covers the RawMap->Map stage.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use structopt::StructOpt;
 
@@ -155,6 +155,7 @@ impl Map {
                 percent_incline: raw_road.percent_incline,
                 crosswalk_forward: raw_road.crosswalk_forward,
                 crosswalk_backward: raw_road.crosswalk_backward,
+                transit_stops: BTreeSet::new(),
             };
             road.speed_limit = road.speed_limit_from_osm();
             road.access_restrictions = road.access_restrictions_from_osm();
@@ -291,10 +292,15 @@ impl Map {
         } else {
             CreateEngine::CH
         };
-        map.pathfinder = Pathfinder::new(&map, map.routing_params().clone(), engine, timer);
+        map.pathfinder = Pathfinder::new(&map, map.routing_params().clone(), &engine, timer);
         timer.stop("setup pathfinding");
 
         transit::finalize_transit(&mut map, &raw, timer);
+        timer.start("setup pathfinding for people using transit");
+        let mut pathfinder = std::mem::replace(&mut map.pathfinder, Pathfinder::empty());
+        pathfinder.finalize_transit(&map, &engine);
+        map.pathfinder = pathfinder;
+        timer.stop("setup pathfinding for people using transit");
 
         map
     }
@@ -360,9 +366,9 @@ pub fn match_points_to_lanes<F: Fn(&Lane) -> bool>(
 /// Adjust the path to start on the polygon's border, not center.
 pub fn trim_path(poly: &Polygon, path: Line) -> Line {
     for line in poly.points().windows(2) {
-        if let Some(l1) = Line::new(line[0], line[1]) {
+        if let Ok(l1) = Line::new(line[0], line[1]) {
             if let Some(hit) = l1.intersection(&path) {
-                if let Some(l2) = Line::new(hit, path.pt2()) {
+                if let Ok(l2) = Line::new(hit, path.pt2()) {
                     return l2;
                 }
             }

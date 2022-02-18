@@ -8,14 +8,16 @@ use map_model::{
     BuildingID, IntersectionID, Map, PathConstraints, PathRequest, Position, TransitRouteID,
     TransitStopID,
 };
+use synthpop::{
+    IndividTrip, OrigPersonID, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose,
+};
 
 use crate::sim::Ctx;
 use crate::{
     AgentID, AgentType, AlertLocation, CarID, Command, CreateCar, CreatePedestrian, DrivingGoal,
-    Event, IndividTrip, OrigPersonID, ParkedCar, ParkingSim, ParkingSpot, PedestrianID, PersonID,
-    PersonSpec, Scenario, SidewalkPOI, SidewalkSpot, StartTripArgs, TransitSimState, TripEndpoint,
-    TripID, TripPhaseType, TripPurpose, TripSpec, Vehicle, VehicleSpec, VehicleType,
-    WalkingSimState,
+    Event, ParkedCar, ParkingSim, ParkingSpot, PedestrianID, PersonID, SidewalkPOI, SidewalkSpot,
+    StartTripArgs, TransitSimState, TripID, TripPhaseType, TripSpec, Vehicle, VehicleSpec,
+    VehicleType, WalkingSimState,
 };
 
 /// Manages people, each of which executes some trips through the day. Each trip is further broken
@@ -109,7 +111,7 @@ impl TripManager {
         let person = &mut self.people[trip.person.0];
         if person.trips.is_empty() {
             person.state = match trip.info.start {
-                TripEndpoint::Bldg(b) => {
+                TripEndpoint::Building(b) => {
                     self.events
                         .push(Event::PersonEntersBuilding(trip.person, b));
                     PersonState::Inside(b)
@@ -992,7 +994,7 @@ impl TripManager {
         }
         // Warp to the destination
         self.people[person.0].state = match trip.info.end {
-            TripEndpoint::Bldg(b) => {
+            TripEndpoint::Building(b) => {
                 self.events.push(Event::PersonEntersBuilding(person, b));
                 PersonState::Inside(b)
             }
@@ -1013,7 +1015,7 @@ impl TripManager {
                     ctx.parking.remove_parked_car(parked_car);
                 }
 
-                if let TripEndpoint::Bldg(b) = trip.info.end {
+                if let TripEndpoint::Building(b) = trip.info.end {
                     let driving_lane = ctx.map.find_driving_lane_near_building(b);
                     if let Some(spot) = ctx
                         .parking
@@ -1350,73 +1352,6 @@ pub(crate) enum TripLeg {
     Drive(CarID, DrivingGoal),
     /// Maybe get off at a stop, maybe ride off-map
     RideBus(TransitRouteID, Option<TransitStopID>),
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
-pub enum TripMode {
-    Walk,
-    Bike,
-    Transit,
-    Drive,
-}
-
-impl TripMode {
-    pub fn all() -> Vec<TripMode> {
-        vec![
-            TripMode::Walk,
-            TripMode::Bike,
-            TripMode::Transit,
-            TripMode::Drive,
-        ]
-    }
-
-    pub fn verb(self) -> &'static str {
-        match self {
-            TripMode::Walk => "walk",
-            TripMode::Bike => "bike",
-            TripMode::Transit => "use transit",
-            TripMode::Drive => "drive",
-        }
-    }
-
-    // If I used "present participle" in a method name, I'd never live it down.
-    pub fn ongoing_verb(self) -> &'static str {
-        match self {
-            TripMode::Walk => "walking",
-            TripMode::Bike => "biking",
-            TripMode::Transit => "using transit",
-            TripMode::Drive => "driving",
-        }
-    }
-
-    pub fn noun(self) -> &'static str {
-        match self {
-            TripMode::Walk => "Pedestrian",
-            TripMode::Bike => "Bike",
-            TripMode::Transit => "Bus",
-            TripMode::Drive => "Car",
-        }
-    }
-
-    pub fn to_constraints(self) -> PathConstraints {
-        match self {
-            TripMode::Walk => PathConstraints::Pedestrian,
-            TripMode::Bike => PathConstraints::Bike,
-            // TODO WRONG
-            TripMode::Transit => PathConstraints::Bus,
-            TripMode::Drive => PathConstraints::Car,
-        }
-    }
-
-    pub fn from_constraints(c: PathConstraints) -> TripMode {
-        match c {
-            PathConstraints::Pedestrian => TripMode::Walk,
-            PathConstraints::Bike => TripMode::Bike,
-            // TODO The bijection breaks down... transit rider vs train vs bus...
-            PathConstraints::Bus | PathConstraints::Train => TripMode::Transit,
-            PathConstraints::Car => TripMode::Drive,
-        }
-    }
 }
 
 pub enum TripResult<T> {

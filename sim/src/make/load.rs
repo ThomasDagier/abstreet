@@ -5,8 +5,9 @@ use structopt::StructOpt;
 
 use abstio::MapName;
 use map_model::{Map, MapEdits};
+use synthpop::{Scenario, ScenarioModifier};
 
-use crate::{Scenario, ScenarioModifier, Sim, SimOptions};
+use crate::{Sim, SimOptions};
 
 /// SimFlags specifies a simulation to setup. After parsing from structopt, you must call
 /// `initialize`.
@@ -114,7 +115,7 @@ impl SimFlags {
                 opts.run_name = scenario.scenario_name.clone();
             }
             let mut sim = Sim::new(&map, opts);
-            scenario.instantiate(&mut sim, &map, &mut rng, timer);
+            sim.instantiate(&scenario, &map, &mut rng, timer);
 
             (map, sim, rng)
         } else if self.load.contains("/raw_maps/") || self.load.contains("/maps/") {

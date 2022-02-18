@@ -151,6 +151,17 @@ impl RoadSideID {
             SideOfRoad::Left => &r.lanes[0],
         }
     }
+
+    pub fn other_side(self) -> RoadSideID {
+        RoadSideID {
+            road: self.road,
+            side: if self.side == SideOfRoad::Left {
+                SideOfRoad::Right
+            } else {
+                SideOfRoad::Left
+            },
+        }
+    }
 }
 
 /// A Road represents a segment between exactly two Intersections. It contains Lanes as children.
@@ -185,6 +196,9 @@ pub struct Road {
     /// Is there a tagged crosswalk near each end of the road?
     pub crosswalk_forward: bool,
     pub crosswalk_backward: bool,
+
+    /// Meaningless order
+    pub transit_stops: BTreeSet<TransitStopID>,
 }
 
 impl Road {
@@ -412,14 +426,6 @@ impl Road {
             .unwrap_or(0)
     }
 
-    pub fn all_transit_stops(&self) -> Vec<TransitStopID> {
-        self.lanes
-            .iter()
-            .flat_map(|l| l.transit_stops.iter())
-            .cloned()
-            .collect()
-    }
-
     pub fn is_light_rail(&self) -> bool {
         self.lanes.len() == 1 && self.lanes[0].lane_type == LaneType::LightRail
     }
@@ -432,16 +438,21 @@ impl Road {
         self.osm_tags.is(osm::HIGHWAY, "service")
     }
 
+    // TODO Shared walking/biking roads get classified as a cycleway for now
     pub fn is_cycleway(&self) -> bool {
         let mut bike = false;
         for lane in &self.lanes {
             if lane.lane_type == LaneType::Biking {
                 bike = true;
-            } else if lane.lane_type != LaneType::Shoulder {
+            } else if !lane.is_walkable() {
                 return false;
             }
         }
         bike
+    }
+
+    pub fn is_driveable(&self) -> bool {
+        self.lanes.iter().any(|l| l.is_driving())
     }
 
     pub fn common_endpoint(&self, other: &Road) -> CommonEndpoint {
@@ -573,7 +584,6 @@ impl Road {
                 dst_i,
                 lane_type: lane.lt,
                 dir: lane.dir,
-                transit_stops: BTreeSet::new(),
                 driving_blackhole: false,
                 biking_blackhole: false,
             });

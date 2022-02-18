@@ -16,7 +16,8 @@ use map_gui::tools::CameraState;
 use map_gui::ID;
 use map_model::AreaType;
 use map_model::{BufferType, IntersectionID, LaneType, Map, Traversable};
-use sim::{AgentID, Analytics, Scenario, Sim, SimCallback, SimFlags, VehicleType};
+use sim::{AgentID, Analytics, Sim, SimCallback, SimFlags, VehicleType};
+use synthpop::Scenario;
 use widgetry::mapspace::ToggleZoomed;
 use widgetry::{Cached, Canvas, EventCtx, GfxCtx, Prerender, SharedAppState, State};
 
@@ -387,12 +388,12 @@ impl App {
                     let road = draw_map.get_r(id);
                     for lane in &road.lanes {
                         agents_on.push(Traversable::Lane(lane.id));
-                        for ts in &map.get_l(lane.id).transit_stops {
-                            if show_objs.show(&ID::TransitStop(*ts)) {
-                                transit_stops.push(draw_map.get_ts(*ts));
-                            }
-                        }
                         lanes.push(lane);
+                    }
+                    for ts in &map.get_r(id).transit_stops {
+                        if show_objs.show(&ID::TransitStop(*ts)) {
+                            transit_stops.push(draw_map.get_ts(*ts));
+                        }
                     }
                     roads.push(road);
                 }
@@ -762,10 +763,6 @@ pub struct SessionState {
     pub ungap_current_trip_name: Option<String>,
     // Map and edit change key
     pub mode_shift: Cached<(MapName, usize), crate::ungap::ModeShiftData>,
-
-    // Specific to LTN
-    pub partitioning: crate::ltn::Partitioning,
-    pub modal_filters: crate::ltn::ModalFilters,
 }
 
 impl SessionState {
@@ -788,9 +785,6 @@ impl SessionState {
             routing_preferences: crate::ungap::RoutingPreferences::default(),
             ungap_current_trip_name: None,
             mode_shift: Cached::new(),
-
-            partitioning: crate::ltn::Partitioning::empty(),
-            modal_filters: crate::ltn::ModalFilters::default(),
         }
     }
 }

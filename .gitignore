@@ -3,17 +3,16 @@
 __pycache__
 .idea/
 
-elevation_input/query
-
 data/player
 importer.json
 
-#data/input
+data/input
 
 data/system/at/salzburg
+data/system/au/melbourne
 data/system/br/sao_paulo
 data/system/ca/montreal
-#data/system/ch/geneva
+data/system/ch/geneva
 data/system/ch/zurich
 data/system/cz/frydek_mistek
 data/system/de/berlin
@@ -55,10 +54,12 @@ data/system/gb/leeds
 data/system/gb/lockleaze
 data/system/gb/london
 data/system/gb/long_marston
+data/system/gb/manchester
 data/system/gb/marsh_barton
 data/system/gb/micklefield
 data/system/gb/newborough_road
 data/system/gb/newcastle_great_park
+data/system/gb/newcastle_upon_tyne
 data/system/gb/northwick_park
 data/system/gb/poundbury
 data/system/gb/priors_hall
@@ -72,6 +73,7 @@ data/system/gb/upton
 data/system/gb/water_lane
 data/system/gb/wichelstowe
 data/system/gb/wixams
+data/system/gb/wokingham
 data/system/gb/wynyard
 data/system/il/tel_aviv
 data/system/ir/tehran

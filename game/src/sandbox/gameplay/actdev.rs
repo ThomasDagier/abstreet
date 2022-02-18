@@ -8,7 +8,8 @@ use rand_xorshift::XorShiftRng;
 use geom::Duration;
 use map_gui::tools::{grey_out_map, nice_map_name, open_browser, PopupMsg};
 use map_model::AreaType;
-use sim::{AgentType, PersonID, TripEndpoint, TripID};
+use sim::{AgentType, PersonID, TripID};
+use synthpop::TripEndpoint;
 use widgetry::{
     lctrl, ControlState, EventCtx, GfxCtx, HorizontalAlignment, Key, Line, Outcome, Panel,
     SimpleState, Text, TextExt, Toggle, VerticalAlignment, Widget,
@@ -68,7 +69,8 @@ impl GameplayState for Actdev {
                     .polygon;
 
                 for person in app.primary.sim.get_all_people() {
-                    if let TripEndpoint::Bldg(b) = app.primary.sim.trip_info(person.trips[0]).start
+                    if let TripEndpoint::Building(b) =
+                        app.primary.sim.trip_info(person.trips[0]).start
                     {
                         if study_area.contains_pt(app.primary.map.get_b(b).polygon.center()) {
                             highlight.insert(person.id);
@@ -266,7 +268,7 @@ impl GameplayState for Actdev {
 struct About;
 
 impl SimpleState<App> for About {
-    fn on_click(&mut self, _: &mut EventCtx, _: &mut App, x: &str, _: &Panel) -> Transition {
+    fn on_click(&mut self, _: &mut EventCtx, _: &mut App, x: &str, _: &mut Panel) -> Transition {
         if x == "close" {
             return Transition::Pop;
         } else if x == "abstreet.org" {

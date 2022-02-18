@@ -38,62 +38,20 @@ pub async fn regenerate_everything(shard_num: usize, num_shards: usize) {
 
     let mut timer = Timer::new("regenerate all maps");
     for (cnt, city) in all_cities.into_iter().enumerate() {
-        let mut job = Job {
-            city: city.clone(),
-            osm_to_raw: true,
-            raw_to_map: true,
-            scenario: false,
-            city_overview: false,
-            only_map: None,
-            opts: RawToMapOptions::default(),
-        };
-        // Only some maps run extra tasks
-        if city == CityName::seattle() || city.country == "gb" {
-            job.scenario = true;
-        }
-        // TODO Autodetect this based on number of maps per city?
-        if city == CityName::new("ch", "zurich")
-            || city == CityName::new("gb", "leeds")
-            || city == CityName::new("us", "nyc")
-            || city == CityName::new("fr", "charleville_mezieres")
-            || city == CityName::new("fr", "paris")
-            || city == CityName::new("at", "salzburg")
-            || city == CityName::new("ir", "tehran")
-            || city == CityName::new("pt", "portugal")
-        {
-            job.city_overview = true;
-        }
-
         if cnt % num_shards == shard_num {
+            let job = Job::full_for_city(city);
             job.run(&mut timer).await;
         }
     }
 }
 
-/// Regenerate all maps from RawMaps in parallel.
-pub fn regenerate_all_maps() {
-    // Omit Seattle and Berlin, because they have special follow-up actions (minifying some maps
-    // and distributing residents)
-    let all_maps: Vec<MapName> = CityName::list_all_cities_from_importer_config()
-        .into_iter()
-        .flat_map(|city| city.list_all_maps_in_city_from_importer_config())
-        .filter(|name| {
-            name != &MapName::new("de", "berlin", "center") && name.city != CityName::seattle()
-        })
-        .collect();
-    Timer::new("regenerate all maps").parallelize("import each city", all_maps, |name| {
-        // Don't pass in a timer; the logs are way too spammy.
-        // It's also recommended to run with RUST_LOG=none
-        utils::raw_to_map(&name, RawToMapOptions::default(), &mut Timer::throwaway())
-    });
-}
-
 /// Transforms a .osm file to a map in one step.
-pub fn oneshot(
+pub async fn oneshot(
     osm_path: String,
     clip: Option<String>,
     drive_on_right: bool,
     filter_crosswalks: bool,
+    create_uk_travel_demand_model: bool,
     opts: RawToMapOptions,
 ) {
     let mut timer = abstutil::Timer::new("oneshot");
@@ -133,6 +91,15 @@ pub fn oneshot(
     timer.start("save map");
     map.save();
     timer.stop("save map");
+
+    if create_uk_travel_demand_model {
+        timer.start("generating UK travel demand model");
+        uk::generate_scenario(&map, &load_configuration(), &mut timer)
+            .await
+            .unwrap();
+        timer.stop("generating UK travel demand model");
+    }
+
     println!("{} has been created", map.get_name().path());
 }
 
@@ -164,6 +131,60 @@ pub struct Job {
 }
 
 impl Job {
+    pub fn full_for_city(city: CityName) -> Job {
+        let mut job = Job {
+            city: city,
+            osm_to_raw: true,
+            raw_to_map: true,
+            scenario: false,
+            city_overview: false,
+            only_map: None,
+            opts: RawToMapOptions::default(),
+        };
+        // Only some maps run extra tasks
+        if job.city == CityName::seattle() || job.city.country == "gb" {
+            job.scenario = true;
+        }
+        // TODO Autodetect this based on number of maps per city?
+        if job.city == CityName::new("ch", "zurich")
+            || job.city == CityName::new("gb", "leeds")
+            || job.city == CityName::new("gb", "london")
+            || job.city == CityName::new("us", "nyc")
+            || job.city == CityName::new("fr", "charleville_mezieres")
+            || job.city == CityName::new("fr", "paris")
+            || job.city == CityName::new("at", "salzburg")
+            || job.city == CityName::new("ir", "tehran")
+            || job.city == CityName::new("pt", "portugal")
+        {
+            job.city_overview = true;
+        }
+        job
+    }
+
+    /// Return the command-line flags that should produce this job. Incomplete -- doesn't invert
+    /// RawToMapOptions
+    pub fn flags(&self) -> Vec<String> {
+        // TODO Can structopt do the inversion?
+        let mut flags = vec![];
+        flags.push(format!("--city={}", self.city.to_path()));
+        if self.osm_to_raw {
+            flags.push("--raw".to_string());
+        }
+        if self.raw_to_map {
+            flags.push("--map".to_string());
+        }
+        if self.scenario {
+            flags.push("--scenario".to_string());
+        }
+        if self.city_overview {
+            flags.push("--city-overview".to_string());
+        }
+        if let Some(ref name) = self.only_map {
+            flags.push(name.clone());
+        }
+        flags
+    }
+
     pub async fn run(self, timer: &mut Timer<'_>) {
         if !self.osm_to_raw && !self.raw_to_map && !self.scenario && !self.city_overview {
             println!(

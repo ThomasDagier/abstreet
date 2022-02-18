@@ -3,7 +3,7 @@ use geom::{Polygon, Pt2D};
 use map_gui::tools::PopupMsg;
 use map_gui::ID;
 use map_model::{BuildingID, NORMAL_LANE_THICKNESS};
-use sim::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
+use synthpop::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
 use widgetry::{
     Choice, Color, EventCtx, GfxCtx, HorizontalAlignment, Key, Line, Outcome, Panel, Spinner,
     State, TextExt, VerticalAlignment, Widget,
@@ -74,7 +74,7 @@ impl AgentSpawner {
             .build(ctx),
         };
         if let Some(b) = start {
-            let endpt = TripEndpoint::Bldg(b);
+            let endpt = TripEndpoint::Building(b);
             let pt = endpt.pt(&app.primary.map);
             spawner.start = Some((endpt, pt));
             spawner.panel.replace(
@@ -112,8 +112,8 @@ impl State<App> for AgentSpawner {
                         });
                     }
                     let mut rng = app.primary.current_flags.sim_flags.make_rng();
-                    scenario.instantiate(
-                        &mut app.primary.sim,
+                    app.primary.sim.instantiate(
+                        &scenario,
                         map,
                         &mut rng,
                         &mut Timer::new("spawn trip"),
@@ -220,7 +220,7 @@ impl State<App> for AgentSpawner {
         }
         if let Some(hovering) = match app.primary.current_selection {
             Some(ID::Intersection(i)) => Some(TripEndpoint::Border(i)),
-            Some(ID::Building(b)) => Some(TripEndpoint::Bldg(b)),
+            Some(ID::Building(b)) => Some(TripEndpoint::Building(b)),
             None => None,
             _ => unreachable!(),
         } {

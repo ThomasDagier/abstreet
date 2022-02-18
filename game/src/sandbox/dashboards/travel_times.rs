@@ -1,13 +1,14 @@
 use std::collections::BTreeSet;
-use std::fs::File;
 use std::io::Write;
 
 use anyhow::Result;
+use fs_err::File;
 
 use abstutil::prettyprint_usize;
 use geom::{Distance, Duration, Polygon, Pt2D};
-use map_gui::tools::PopupMsg;
-use sim::{TripID, TripMode};
+use map_gui::tools::{color_for_mode, PopupMsg};
+use sim::TripID;
+use synthpop::TripMode;
 use widgetry::{
     Choice, Color, CompareTimes, DrawWithTooltips, EventCtx, GeomBatch, GfxCtx, Line, Outcome,
     Panel, State, Text, TextExt, Toggle, Widget,
@@ -15,7 +16,6 @@ use widgetry::{
 
 use super::trip_problems::{problem_matrix, ProblemType, TripProblemFilter};
 use crate::app::{App, Transition};
-use crate::common::color_for_mode;
 use crate::sandbox::dashboards::generic_trip_table::open_trip_transition;
 use crate::sandbox::dashboards::DashTab;
 
@@ -328,8 +328,7 @@ fn contingency_table(ctx: &mut EventCtx, app: &App, filter: &Filter) -> Widget {
             let line_bottom = bottom_of_top_bar + text_v_padding / 2.0 + 2.0;
             batch.push(
                 ctx.style().text_secondary_color.shade(0.2),
-                geom::Line::new(Pt2D::new(x, line_top), Pt2D::new(x, line_bottom))
-                    .unwrap()
+                geom::Line::must_new(Pt2D::new(x, line_top), Pt2D::new(x, line_bottom))
                     .make_polygons(line_thickness),
             );
         }
@@ -339,8 +338,7 @@ fn contingency_table(ctx: &mut EventCtx, app: &App, filter: &Filter) -> Widget {
             let line_top = line_bottom - text_v_padding / 2.0 - 2.0;
             batch.push(
                 ctx.style().text_secondary_color.shade(0.2),
-                geom::Line::new(Pt2D::new(x, line_top), Pt2D::new(x, line_bottom))
-                    .unwrap()
+                geom::Line::must_new(Pt2D::new(x, line_top), Pt2D::new(x, line_bottom))
                     .make_polygons(line_thickness),
             );
         }
@@ -537,7 +535,7 @@ fn contingency_table(ctx: &mut EventCtx, app: &App, filter: &Filter) -> Widget {
             )
             .for_each(|(interval, y)| {
                 let start = Pt2D::new(0.0, y);
-                let line = geom::Line::new(start, start.offset(line_length, 0.0)).unwrap();
+                let line = geom::Line::must_new(start, start.offset(line_length, 0.0));
                 let poly = line.make_polygons(Distance::meters(line_thickness));
                 y_axis_ticks.push(ctx.style().text_secondary_color, poly);
 

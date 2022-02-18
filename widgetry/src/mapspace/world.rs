@@ -195,6 +195,11 @@ impl<'a, ID: ObjectID> ObjectBuilder<'a, ID> {
         self.draw_hovered(draw)
     }
 
+    /// Mark that an object is hoverable, but don't actually draw anything while hovering on it
+    pub fn invisibly_hoverable(self) -> Self {
+        self.draw_hovered(GeomBatch::new())
+    }
+
     /// Draw a tooltip while hovering over this object.
     pub fn tooltip(mut self, txt: Text) -> Self {
         assert!(self.tooltip.is_none(), "already specified tooltip");

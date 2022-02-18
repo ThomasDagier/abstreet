@@ -19,6 +19,7 @@ pub enum Executable {
     ParkingMapper,
     Santa,
     RawMapEditor,
+    LTN,
 }
 
 impl<A: AppLike + 'static> TitleScreen<A> {
@@ -211,6 +212,7 @@ impl Executable {
                 Executable::ParkingMapper => "parking_mapper",
                 Executable::Santa => "santa",
                 Executable::RawMapEditor => "map_editor",
+                Executable::LTN => "ltn",
             });
 
             // We can only replace the current process on Linux/Mac
@@ -251,6 +253,7 @@ impl Executable {
                 Executable::ParkingMapper => unreachable!(),
                 Executable::Santa => "santa",
                 Executable::RawMapEditor => "map_editor",
+                Executable::LTN => "ltn",
             };
             let url = format!("{}.html{}", page, abstutil::args_to_query_string(args));
             if let Err(err) = set_href(&url) {
@@ -266,7 +269,13 @@ impl Executable {
 }
 
 impl<A: AppLike + 'static> SimpleState<A> for TitleScreen<A> {
-    fn on_click(&mut self, ctx: &mut EventCtx, app: &mut A, x: &str, _: &Panel) -> Transition<A> {
+    fn on_click(
+        &mut self,
+        ctx: &mut EventCtx,
+        app: &mut A,
+        x: &str,
+        _: &mut Panel,
+    ) -> Transition<A> {
         match x {
             "Traffic simulation tutorial" => {
                 self.run(ctx, app, Executable::ABStreet, vec!["--tutorial-intro"])
@@ -281,7 +290,7 @@ impl<A: AppLike + 'static> SimpleState<A> for TitleScreen<A> {
             "Community proposals" => self.run(ctx, app, Executable::ABStreet, vec!["--proposals"]),
             "Ungap the Map" => self.run(ctx, app, Executable::ABStreet, vec!["--ungap"]),
             "15-minute neighborhoods" => self.run(ctx, app, Executable::FifteenMin, vec![]),
-            "Low traffic neighborhoods" => self.run(ctx, app, Executable::ABStreet, vec!["--ltn"]),
+            "Low traffic neighborhoods" => self.run(ctx, app, Executable::LTN, vec![]),
             "ActDev" => {
                 open_browser("https://actdev.cyipt.bike");
                 Transition::Keep

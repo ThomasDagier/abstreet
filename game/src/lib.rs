@@ -17,6 +17,7 @@ use map_gui::options::Options;
 use map_gui::tools::{PopupMsg, URLManager};
 use map_model::{Map, MapEdits};
 use sim::Sim;
+use synthpop::Scenario;
 use widgetry::{EventCtx, Settings, State, Transition};
 
 use crate::app::{App, Flags, PerMap};
@@ -32,7 +33,6 @@ mod devtools;
 mod edit;
 mod info;
 mod layer;
-mod ltn;
 mod pregame;
 mod sandbox;
 mod ungap;
@@ -97,9 +97,6 @@ struct Args {
     /// Launch Ungap the Map, a bike network planning tool
     #[structopt(long)]
     ungap: bool,
-    /// Start a low-traffic neighborhood planner
-    #[structopt(long)]
-    ltn: bool,
     /// Start by listing internal developer tools
     #[structopt(long)]
     devtools: bool,
@@ -118,6 +115,9 @@ struct Args {
     /// Start by showing an ActDev scenario. Either "base" or "go_active".
     #[structopt(long)]
     actdev_scenario: Option<String>,
+    /// Start in a tool for comparing traffic counts
+    #[structopt(long)]
+    compare_counts: Option<Vec<String>>,
 }
 
 struct Setup {
@@ -141,9 +141,9 @@ enum Mode {
     Sandbox,
     Proposals,
     Ungap,
-    Ltn,
     Devtools,
     LoadKML(String),
+    CompareCounts(String, String),
     Gameplay(GameplayMode),
 }
 
@@ -183,12 +183,15 @@ fn run(mut settings: Settings) {
             Mode::Proposals
         } else if args.ungap {
             Mode::Ungap
-        } else if args.ltn {
-            Mode::Ltn
         } else if args.devtools {
             Mode::Devtools
         } else if let Some(kml) = args.load_kml {
             Mode::LoadKML(kml)
+        } else if let Some(mut paths) = args.compare_counts {
+            if paths.len() != 2 {
+                panic!("--compare-counts takes exactly two paths");
+            }
+            Mode::CompareCounts(paths.remove(0), paths.remove(0))
         } else {
             Mode::SomethingElse
         },
@@ -553,7 +556,7 @@ fn finish_app_setup(
                 app,
                 GameplayMode::PlayScenario(
                     app.primary.map.get_name().clone(),
-                    pregame::default_scenario_for_map(app.primary.map.get_name()),
+                    Scenario::default_scenario_for_map(app.primary.map.get_name()),
                     Vec::new(),
                 ),
             ),
@@ -562,9 +565,13 @@ fn finish_app_setup(
                 let layers = ungap::Layers::new(ctx, app);
                 ungap::ExploreMap::new_state(ctx, app, layers)
             }
-            Mode::Ltn => ltn::BrowseNeighborhoods::new_state(ctx, app),
             Mode::Devtools => devtools::DevToolsMode::new_state(ctx, app),
             Mode::LoadKML(path) => crate::devtools::kml::ViewKML::new_state(ctx, app, Some(path)),
+            Mode::CompareCounts(path1, path2) => {
+                crate::devtools::compare_counts::GenericCompareCounts::new_state(
+                    ctx, app, path1, path2,
+                )
+            }
         }
     };
     vec![TitleScreen::new_state(ctx, app), state]

@@ -2,18 +2,22 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 use abstutil::wraparound_get;
 use geom::{Polygon, Pt2D, Ring};
 
 use crate::{CommonEndpoint, Direction, LaneID, Map, RoadID, RoadSideID, SideOfRoad};
 
+// See https://github.com/a-b-street/abstreet/issues/841. Slow but correct when enabled.
+const LOSSLESS_BLOCKFINDING: bool = true;
+
 /// A block is defined by a perimeter that traces along the sides of roads. Inside the perimeter,
 /// the block may contain buildings and interior roads. In the simple case, a block represents a
 /// single "city block", with no interior roads. It may also cover a "neighborhood", where the
 /// perimeter contains some "major" and the interior consists only of "minor" roads.
 // TODO Maybe "block" is a misleading term. "Contiguous road trace area"?
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Block {
     pub perimeter: Perimeter,
     /// The polygon covers the interior of the block.
@@ -24,7 +28,7 @@ pub struct Block {
 /// along this sequence should geometrically yield a simple polygon.
 // TODO Handle the map boundary. Sometimes this perimeter should be broken up by border
 // intersections or possibly by water/park areas.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Perimeter {
     pub roads: Vec<RoadSideID>,
     /// These roads exist entirely within the perimeter
@@ -34,10 +38,16 @@ pub struct Perimeter {
 impl Perimeter {
     /// Starting at any lane, snap to the nearest side of that road, then begin tracing a single
     /// block, with no interior roads. This will fail if a map boundary is reached. The results are
-    /// unusual when crossing the entrance to a tunnel or bridge.
-    pub fn single_block(map: &Map, start: LaneID) -> Result<Perimeter> {
+    /// unusual when crossing the entrance to a tunnel or bridge, and so `skip` is used to avoid
+    /// tracing there.
+    pub fn single_block(map: &Map, start: LaneID, skip: &HashSet<RoadID>) -> Result<Perimeter> {
         let mut roads = Vec::new();
         let start_road_side = map.get_l(start).get_nearest_side_of_road(map);
+
+        if skip.contains(&start_road_side.road) {
+            bail!("Started on a road we shouldn't trace");
+        }
+
         // We need to track which side of the road we're at, but also which direction we're facing
         let mut current_road_side = start_road_side;
         let mut current_intersection = map.get_l(start).dst_i;
@@ -46,7 +56,8 @@ impl Perimeter {
             if i.is_border() {
                 bail!("hit the map boundary");
             }
-            let sorted_roads = i.get_road_sides_sorted_by_incoming_angle(map);
+            let mut sorted_roads = i.get_road_sides_sorted_by_incoming_angle(map);
+            sorted_roads.retain(|id| !skip.contains(&id.road));
             let idx = sorted_roads
                 .iter()
                 .position(|x| *x == current_road_side)
@@ -84,6 +95,8 @@ impl Perimeter {
     /// This calculates all single block perimeters for the entire map. The resulting list does not
     /// cover roads near the map boundary.
     pub fn find_all_single_blocks(map: &Map) -> Vec<Perimeter> {
+        let skip = Perimeter::find_roads_to_skip_tracing(map);
+
         let mut seen = HashSet::new();
         let mut perimeters = Vec::new();
         for lane in map.all_lanes() {
@@ -91,7 +104,7 @@ impl Perimeter {
             if seen.contains(&side) {
                 continue;
             }
-            match Perimeter::single_block(map, lane.id) {
+            match Perimeter::single_block(map, lane.id, &skip) {
                 Ok(perimeter) => {
                     seen.extend(perimeter.roads.clone());
                     perimeters.push(perimeter);
@@ -108,6 +121,21 @@ impl Perimeter {
             }
         }
         perimeters
+    }
+
+    /// Trying to form blocks near railways or cycleways that involve bridges/tunnels often causes
+    /// overlapping geometry or blocks that're way too large. These are extremely imperfect
+    /// heuristics to avoid the worst problems.
+    pub fn find_roads_to_skip_tracing(map: &Map) -> HashSet<RoadID> {
+        let mut skip = HashSet::new();
+        for r in map.all_roads() {
+            if r.is_light_rail() {
+                skip.insert(r.id);
+            } else if r.is_cycleway() && r.zorder != 0 {
+                skip.insert(r.id);
+            }
+        }
+        skip
     }
 
     /// A perimeter has the first and last road matching up, but that's confusing to
@@ -127,8 +155,14 @@ impl Perimeter {
     ///
     /// Note this may modify both perimeters and still return `false`. The modification is just to
     /// rotate the order of the road loop; this doesn't logically change the perimeter.
+    ///
+    /// TODO Due to https://github.com/a-b-street/abstreet/issues/841, it seems like rotation
+    /// sometimes breaks `to_block`, so for now, always revert to the original upon failure.
     // TODO Would it be cleaner to return a Result here and always restore the invariant?
-    fn try_to_merge(&mut self, other: &mut Perimeter, debug_failures: bool) -> bool {
+    fn try_to_merge(&mut self, map: &Map, other: &mut Perimeter, debug_failures: bool) -> bool {
+        let orig_self = self.clone();
+        let orig_other = other.clone();
+
         self.undo_invariant();
         other.undo_invariant();
 
@@ -137,11 +171,11 @@ impl Perimeter {
         let roads2: HashSet<RoadID> = other.roads.iter().map(|id| id.road).collect();
         let common: HashSet<RoadID> = roads1.intersection(&roads2).cloned().collect();
         if common.is_empty() {
-            self.restore_invariant();
-            other.restore_invariant();
             if debug_failures {
                 warn!("No common roads");
             }
+            *self = orig_self;
+            *other = orig_other;
             return false;
         }
 
@@ -197,8 +231,8 @@ impl Perimeter {
             }
         }
         if !ok {
-            self.restore_invariant();
-            other.restore_invariant();
+            *self = orig_self;
+            *other = orig_other;
             return false;
         }
 
@@ -211,6 +245,16 @@ impl Perimeter {
         // This order assumes everything is clockwise to start with.
         self.roads.append(&mut other.roads);
 
+        // TODO This case was introduced with find_roads_to_skip_tracing. Not sure why.
+        if self.roads.is_empty() {
+            if debug_failures {
+                warn!("Two perimeters had every road in common: {:?}", common);
+            }
+            *self = orig_self;
+            *other = orig_other;
+            return false;
+        }
+
         self.interior.extend(common);
         self.interior.append(&mut other.interior);
 
@@ -220,13 +264,21 @@ impl Perimeter {
         // Make sure we didn't wind up with any internal dead-ends
         self.collapse_deadends();
 
+        // TODO This is an expensive sanity check needed for
+        // https://github.com/a-b-street/abstreet/issues/841
+        if LOSSLESS_BLOCKFINDING && self.clone().to_block(map).is_err() {
+            *self = orig_self;
+            *other = orig_other;
+            return false;
+        }
+
         true
     }
 
     /// Try to merge all given perimeters. If successful, only one perimeter will be returned.
     /// Perimeters are never "destroyed" -- if not merged, they'll appear in the results. If
     /// `stepwise_debug` is true, returns after performing just one merge.
-    pub fn merge_all(mut input: Vec<Perimeter>, stepwise_debug: bool) -> Vec<Perimeter> {
+    pub fn merge_all(map: &Map, mut input: Vec<Perimeter>, stepwise_debug: bool) -> Vec<Perimeter> {
         // Internal dead-ends break merging, so first collapse of those. Do this before even
         // looking for neighbors, since find_common_roads doesn't understand dead-ends.
         for p in &mut input {
@@ -244,7 +296,7 @@ impl Perimeter {
                 }
 
                 for other in &mut results {
-                    if other.try_to_merge(&mut perimeter, stepwise_debug) {
+                    if other.try_to_merge(map, &mut perimeter, stepwise_debug) {
                         // To debug, return after any single change
                         debug = stepwise_debug;
                         continue 'INPUT;
@@ -267,6 +319,7 @@ impl Perimeter {
     /// If the perimeter follows any dead-end roads, "collapse" them and instead make the perimeter
     /// contain the dead-end.
     pub fn collapse_deadends(&mut self) {
+        let orig = self.clone();
         self.undo_invariant();
 
         // TODO Workaround https://github.com/a-b-street/abstreet/issues/834. If this is a loop
@@ -293,6 +346,11 @@ impl Perimeter {
         }
 
         self.roads = roads;
+        if self.roads.is_empty() {
+            // TODO This case was introduced with find_roads_to_skip_tracing. Not sure why.
+            *self = orig;
+            return;
+        }
         self.restore_invariant();
     }
 

@@ -4679,6 +4679,7 @@
                 "urls" : {
                     "pbf" : "https://download.geofabrik.de/central-america/nicaragua-latest.osm.pbf",
                     "bz2" : "https://download.geofabrik.de/central-america/nicaragua-latest.osm.bz2",
+                    "shp" : "https://download.geofabrik.de/central-america/nicaragua-latest-free.shp.zip",
                     "pbf-internal" : "https://osm-internal.download.geofabrik.de/central-america/nicaragua-latest-internal.osm.pbf",
                     "history" : "https://osm-internal.download.geofabrik.de/central-america/nicaragua-internal.osh.pbf",
                     "taginfo" : "https://taginfo.geofabrik.de/central-america/nicaragua/",

@@ -13,7 +13,12 @@ mod import_scenario;
 mod one_step_import;
 mod osm2lanes;
 
+use std::io::Write;
+
+use abstio::CityName;
 use anyhow::Result;
+use fs_err::File;
+use importer::Job;
 use structopt::StructOpt;
 
 use abstutil::Timer;
@@ -162,6 +167,10 @@ enum Command {
         /// Downgrade crosswalks not matching a `highway=crossing` OSM node into unmarked crossings.
         #[structopt(long)]
         filter_crosswalks: bool,
+        /// Generate a simple travel demand model based on 2011 UK commuting data. This will only
+        /// work if the boundary is in the UK.
+        #[structopt(long)]
+        create_uk_travel_demand_model: bool,
     },
     /// Imports a one-shot A/B Street map from an .osm file in a single command.
     OneshotImport {
@@ -177,6 +186,10 @@ enum Command {
         /// Downgrade crosswalks not matching a `highway=crossing` OSM node into unmarked crossings.
         #[structopt(long)]
         filter_crosswalks: bool,
+        /// Generate a simple travel demand model based on 2011 UK commuting data. This will only
+        /// work if the boundary is in the UK.
+        #[structopt(long)]
+        create_uk_travel_demand_model: bool,
         #[structopt(flatten)]
         opts: map_model::RawToMapOptions,
     },
@@ -191,12 +204,12 @@ enum Command {
         #[structopt(long, default_value = "1")]
         num_shards: usize,
     },
-    /// Regenerate all maps from RawMaps in parallel.
-    RegenerateAllMaps,
+    /// Generate a shell script to regenerate all cities that uses an external task runner.
+    RegenerateEverythingExternally,
     /// Import RawMaps, maps, scenarios, and city overviews for a single city.
     Import {
         #[structopt(flatten)]
-        job: importer::Job,
+        job: Job,
     },
     /// Generates JSON test cases for osm2lanes.
     #[structopt(name = "osm2lanes")]
@@ -263,6 +276,7 @@ async fn main() -> Result<()> {
             drive_on_left,
             use_geofabrik,
             filter_crosswalks,
+            create_uk_travel_demand_model,
         } => {
             one_step_import::run(
                 geojson_path,
@@ -270,6 +284,7 @@ async fn main() -> Result<()> {
                 drive_on_left,
                 use_geofabrik,
                 filter_crosswalks,
+                create_uk_travel_demand_model,
             )
             .await?
         }
@@ -278,13 +293,24 @@ async fn main() -> Result<()> {
             clip_path,
             drive_on_left,
             filter_crosswalks,
+            create_uk_travel_demand_model,
             opts,
-        } => importer::oneshot(osm_input, clip_path, drive_on_left, filter_crosswalks, opts),
+        } => {
+            importer::oneshot(
+                osm_input,
+                clip_path,
+                drive_on_left,
+                filter_crosswalks,
+                create_uk_travel_demand_model,
+                opts,
+            )
+            .await
+        }
         Command::RegenerateEverything {
             shard_num,
             num_shards,
         } => importer::regenerate_everything(shard_num, num_shards).await,
-        Command::RegenerateAllMaps => importer::regenerate_all_maps(),
+        Command::RegenerateEverythingExternally => regenerate_everything_externally()?,
         Command::Import { job } => job.run(&mut Timer::new("import one city")).await,
         Command::OSM2Lanes { map_path } => osm2lanes::run(map_path),
     }
@@ -300,7 +326,7 @@ fn dump_json(path: String) {
         return;
     }
     if let Ok(scenario) =
-        abstio::maybe_read_binary::<sim::Scenario>(path.clone(), &mut Timer::throwaway())
+        abstio::maybe_read_binary::<synthpop::Scenario>(path.clone(), &mut Timer::throwaway())
     {
         println!("{}", abstutil::to_json(&scenario));
         return;
@@ -340,4 +366,24 @@ fn minify_map(path: String) {
     map.minify(&mut timer);
     // This also changes the name, so this won't overwrite anything
     map.save();
+}
+
+fn regenerate_everything_externally() -> Result<()> {
+    let path = "regenerate.sh";
+    let mut f = File::create(path)?;
+    writeln!(f, "#!/bin/sh")?;
+    writeln!(f, "pueue parallel 16")?;
+    for city in CityName::list_all_cities_from_importer_config() {
+        let job = Job::full_for_city(city);
+        writeln!(f, "pueue add -- ./import.sh {}", job.flags().join(" "))?;
+    }
+    println!("");
+    println!(
+        "You can run {}. You'll need https://github.com/Nukesor/pueue set up first",
+        path
+    );
+    println!("Handy reminders: pueue status / pause / reset");
+    println!("pueue status | grep Success | wc -l");
+    println!("For the long-tail: pueue status | grep Running");
+    Ok(())
 }

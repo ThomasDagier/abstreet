@@ -4,6 +4,7 @@ use geom::Percent;
 use map_gui::load::MapLoader;
 use map_gui::tools::{open_browser, PopupMsg};
 use map_model::PermanentMapEdits;
+use synthpop::Scenario;
 use widgetry::{EventCtx, Key, Line, Panel, SimpleState, State, Text, Widget};
 
 use crate::app::{App, Transition};
@@ -105,7 +106,13 @@ impl Proposals {
 }
 
 impl SimpleState<App> for Proposals {
-    fn on_click(&mut self, ctx: &mut EventCtx, app: &mut App, x: &str, _: &Panel) -> Transition {
+    fn on_click(
+        &mut self,
+        ctx: &mut EventCtx,
+        app: &mut App,
+        x: &str,
+        _: &mut Panel,
+    ) -> Transition {
         match x {
             "close" => Transition::Pop,
             "Try out this proposal" => launch(
@@ -163,7 +170,7 @@ fn launch(ctx: &mut EventCtx, app: &App, edits: PermanentMapEdits) -> Transition
                     app,
                     GameplayMode::PlayScenario(
                         app.primary.map.get_name().clone(),
-                        crate::pregame::default_scenario_for_map(app.primary.map.get_name()),
+                        Scenario::default_scenario_for_map(app.primary.map.get_name()),
                         Vec::new(),
                     ),
                 ))

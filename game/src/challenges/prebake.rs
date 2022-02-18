@@ -4,7 +4,8 @@ use abstio::MapName;
 use abstutil::{prettyprint_usize, Timer};
 use geom::{Duration, Time};
 use map_model::Map;
-use sim::{AlertHandler, Scenario, ScenarioGenerator, Sim, SimFlags, SimOptions};
+use sim::{AlertHandler, ScenarioGenerator, Sim, SimFlags, SimOptions};
+use synthpop::Scenario;
 
 use crate::sandbox::TutorialState;
 
@@ -42,16 +43,19 @@ pub fn prebake_all() {
         summaries.push(prebake(&map, scenario, &mut timer));
     }
 
-    let pbury_map = map_model::Map::load_synchronously(
-        MapName::new("gb", "poundbury", "center").path(),
-        &mut timer,
-    );
-    for scenario_name in ["base", "go_active", "base_with_bg", "go_active_with_bg"] {
-        let scenario: Scenario = abstio::read_binary(
-            abstio::path_scenario(pbury_map.get_name(), scenario_name),
+    // Since adding off-map traffic, these all gridlock now
+    if false {
+        let pbury_map = map_model::Map::load_synchronously(
+            MapName::new("gb", "poundbury", "center").path(),
             &mut timer,
         );
-        summaries.push(prebake(&pbury_map, scenario, &mut timer));
+        for scenario_name in ["base", "go_active", "base_with_bg", "go_active_with_bg"] {
+            let scenario: Scenario = abstio::read_binary(
+                abstio::path_scenario(pbury_map.get_name(), scenario_name),
+                &mut timer,
+            );
+            summaries.push(prebake(&pbury_map, scenario, &mut timer));
+        }
     }
 
     {
@@ -67,10 +71,10 @@ pub fn prebake_all() {
         summaries.push(prebake(&tehran_map, scenario, &mut timer));
     }
 
-    // Assume this is being run from the 'game' directory. This other tests directory is the most
-    // appropriate place to keep this.
+    // Assume this is being run from the root directory (via import.sh). This other tests directory
+    // is the most appropriate place to keep this.
     abstio::write_json(
-        "../tests/goldenfiles/prebaked_summaries.json".to_string(),
+        "tests/goldenfiles/prebaked_summaries.json".to_string(),
         &summaries,
     );
 }
@@ -87,7 +91,7 @@ fn prebake(map: &Map, scenario: Scenario, timer: &mut Timer) -> PrebakeSummary {
     let mut sim = Sim::new(map, opts);
     // Bit of an abuse of this, but just need to fix the rng seed.
     let mut rng = SimFlags::for_test("prebaked").make_rng();
-    scenario.instantiate(&mut sim, map, &mut rng, timer);
+    sim.instantiate(&scenario, map, &mut rng, timer);
 
     // Run until a few hours after the end of the day. Some trips start close to midnight, and we
     // want prebaked data for them too.

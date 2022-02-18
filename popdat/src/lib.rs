@@ -27,7 +27,7 @@ use rand_xorshift::XorShiftRng;
 use abstutil::Timer;
 use geom::{Distance, Time};
 use map_model::{BuildingID, Map};
-use sim::Scenario;
+use synthpop::Scenario;
 
 pub use self::distribute_people::distribute_population_to_homes;
 
@@ -126,7 +126,7 @@ pub fn generate_scenario(
     timer.stop("building people");
 
     timer.start("removing weird schedules");
-    scenario = scenario.remove_weird_schedules();
+    scenario = scenario.remove_weird_schedules(true);
     timer.stop("removing weird schedules");
 
     scenario

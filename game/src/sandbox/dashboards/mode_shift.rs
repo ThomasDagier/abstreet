@@ -4,7 +4,8 @@ use abstutil::Counter;
 use geom::{Distance, Duration};
 use map_gui::tools::ColorNetwork;
 use map_model::PathStepV2;
-use sim::{TripEndpoint, TripID, TripMode};
+use sim::TripID;
+use synthpop::{TripEndpoint, TripMode};
 use widgetry::table::{Col, Filter, Table};
 use widgetry::{
     Drawable, EventCtx, Filler, GeomBatch, GfxCtx, Line, Outcome, Panel, Spinner, State, Text,
@@ -129,8 +130,8 @@ fn produce_raw_data(ctx: &mut EventCtx, app: &App) -> Vec<Entry> {
                 .into_iter()
                 .filter_map(|(id, info)| {
                     if info.mode == TripMode::Drive
-                        && matches!(info.start, TripEndpoint::Bldg(_))
-                        && matches!(info.end, TripEndpoint::Bldg(_))
+                        && matches!(info.start, TripEndpoint::Building(_))
+                        && matches!(info.end, TripEndpoint::Building(_))
                     {
                         Some((id, info))
                     } else {

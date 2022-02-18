@@ -9,6 +9,7 @@ abstio = { path = "../abstio" }
 abstutil = { path = "../abstutil" }
 anyhow = "1.0.38"
 csv = "1.1.4"
+fs-err = "2.6.0"
 geo = "0.18.0"
 geojson = { version = "0.22.0", features = ["geo-types"] }
 geom = { path = "../geom" }
@@ -20,5 +21,6 @@ rand  = "0.8.3"
 rand_xorshift = "0.3.0"
 serde = "1.0.123"
 sim = { path = "../sim" }
+synthpop = { path = "../synthpop" }
 structopt = "0.3.23"
 tokio = { version = "1.1.1", features = ["full"] }

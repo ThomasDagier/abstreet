@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use enumset::EnumSet;
 use maplit::btreeset;
 
-use map_gui::tools::ColorDiscrete;
+use map_gui::tools::{checkbox_per_mode, intersections_from_roads, ColorDiscrete};
 use map_model::{AccessRestrictions, CommonEndpoint, PathConstraints, RoadID};
-use sim::TripMode;
+use synthpop::TripMode;
 use widgetry::mapspace::ToggleZoomed;
 use widgetry::{
     Color, EventCtx, GfxCtx, HorizontalAlignment, Key, Line, Outcome, Panel, State, Text,
@@ -13,8 +13,8 @@ use widgetry::{
 };
 
 use crate::app::{App, Transition};
+use crate::common::CommonState;
 use crate::common::RoadSelector;
-use crate::common::{checkbox_per_mode, intersections_from_roads, CommonState};
 use crate::edit::apply_map_edits;
 
 pub struct ZoneEditor {

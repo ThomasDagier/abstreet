@@ -13,7 +13,8 @@ use map_model::{
     osm, ControlTrafficSignal, IntersectionID, PathConstraints, Perimeter, Position, RoadID,
     NORMAL_LANE_THICKNESS,
 };
-use sim::{Sim, TripEndpoint};
+use sim::Sim;
+use synthpop::TripEndpoint;
 use widgetry::{
     lctrl, Cached, Choice, Color, DrawBaselayer, Drawable, EventCtx, GeomBatch, GfxCtx,
     HorizontalAlignment, Key, Line, Outcome, Panel, State, Text, Toggle, UpdateType,
@@ -403,7 +404,7 @@ impl State<App> for DebugMode {
                 #[cfg(not(target_arch = "wasm32"))]
                 "undo all merged roads" => {
                     if let Err(err) =
-                        std::fs::rename("merge_osm_ways.json", "UNDO_merge_osm_ways.json")
+                        fs_err::rename("merge_osm_ways.json", "UNDO_merge_osm_ways.json")
                     {
                         warn!("No merged road file? {}", err);
                     }
@@ -787,9 +788,14 @@ impl ContextualActions for Actions {
             }
             (ID::Lane(l), "trace this block") => {
                 app.primary.current_selection = None;
+                let map = &app.primary.map;
                 return Transition::Push(
-                    match Perimeter::single_block(&app.primary.map, l)
-                        .and_then(|perim| perim.to_block(&app.primary.map))
+                    match Perimeter::single_block(
+                        map,
+                        l,
+                        &Perimeter::find_roads_to_skip_tracing(map),
+                    )
+                    .and_then(|perim| perim.to_block(map))
                     {
                         Ok(block) => blockfinder::OneBlock::new_state(ctx, app, block),
                         Err(err) => {
@@ -843,7 +849,7 @@ impl ContextualActions for Actions {
                 ))
             }
             (ID::Building(b), "route from here") => Transition::Push(
-                routes::RouteExplorer::new_state(ctx, app, TripEndpoint::Bldg(b)),
+                routes::RouteExplorer::new_state(ctx, app, TripEndpoint::Building(b)),
             ),
             _ => unreachable!(),
         }
@@ -1057,7 +1063,7 @@ fn reimport_map(
             if !success {
                 if let Some(ways) = rollback {
                     if let Err(err) =
-                        std::fs::copy("merge_osm_ways.json", "BROKEN_merge_osm_ways.json")
+                        fs_err::copy("merge_osm_ways.json", "BROKEN_merge_osm_ways.json")
                     {
                         warn!("No merged road file? {}", err);
                     }

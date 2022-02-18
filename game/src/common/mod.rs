@@ -1,19 +1,16 @@
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-use geom::{Distance, Duration, Polygon, Time};
+use geom::{Duration, Polygon, Time};
 use map_gui::ID;
-use map_model::{IntersectionID, Map, RoadID};
-use sim::{AgentType, TripMode, TripPhaseType};
+use sim::{AgentType, TripPhaseType};
 use widgetry::{
     lctrl, Color, EventCtx, GeomBatch, GfxCtx, HorizontalAlignment, Key, Line, Panel, ScreenDims,
-    ScreenPt, ScreenRectangle, Text, TextSpan, Toggle, VerticalAlignment, Widget,
+    ScreenPt, ScreenRectangle, Text, TextSpan, VerticalAlignment, Widget,
 };
 
 pub use self::route_sketcher::RouteSketcher;
 pub use self::select::RoadSelector;
 pub use self::warp::{warp_to_id, Warping};
-pub use self::waypoints::{InputWaypoints, WaypointID};
 use crate::app::App;
 use crate::app::Transition;
 use crate::info::{ContextualActions, InfoPanel, Tab};
@@ -23,7 +20,6 @@ mod route_sketcher;
 mod select;
 pub mod share;
 mod warp;
-mod waypoints;
 
 // TODO This is now just used in two modes...
 pub struct CommonState {
@@ -370,64 +366,6 @@ pub fn cmp_duration_shorter(app: &App, after: Duration, before: Duration) -> Vec
     }
 }
 
-/// Shorter is better
-pub fn cmp_dist(txt: &mut Text, app: &App, dist: Distance, shorter: &str, longer: &str) {
-    match dist.cmp(&Distance::ZERO) {
-        Ordering::Less => {
-            txt.add_line(
-                Line(format!(
-                    "{} {}",
-                    (-dist).to_string(&app.opts.units),
-                    shorter
-                ))
-                .fg(Color::GREEN),
-            );
-        }
-        Ordering::Greater => {
-            txt.add_line(
-                Line(format!("{} {}", dist.to_string(&app.opts.units), longer)).fg(Color::RED),
-            );
-        }
-        Ordering::Equal => {}
-    }
-}
-
-/// Shorter is better
-pub fn cmp_duration(txt: &mut Text, app: &App, duration: Duration, shorter: &str, longer: &str) {
-    match duration.cmp(&Duration::ZERO) {
-        Ordering::Less => {
-            txt.add_line(
-                Line(format!(
-                    "{} {}",
-                    (-duration).to_string(&app.opts.units),
-                    shorter
-                ))
-                .fg(Color::GREEN),
-            );
-        }
-        Ordering::Greater => {
-            txt.add_line(
-                Line(format!(
-                    "{} {}",
-                    duration.to_string(&app.opts.units),
-                    longer
-                ))
-                .fg(Color::RED),
-            );
-        }
-        Ordering::Equal => {}
-    }
-}
-
-pub fn color_for_mode(app: &App, m: TripMode) -> Color {
-    match m {
-        TripMode::Walk => app.cs.unzoomed_pedestrian,
-        TripMode::Bike => app.cs.unzoomed_bike,
-        TripMode::Transit => app.cs.unzoomed_bus,
-        TripMode::Drive => app.cs.unzoomed_car,
-    }
-}
-
 pub fn color_for_agent_type(app: &App, a: AgentType) -> Color {
     match a {
         AgentType::Pedestrian => app.cs.unzoomed_pedestrian,
@@ -449,42 +387,6 @@ pub fn color_for_trip_phase(app: &App, tpt: TripPhaseType) -> Color {
         TripPhaseType::Cancelled | TripPhaseType::Finished => unreachable!(),
         TripPhaseType::DelayedStart => Color::YELLOW,
     }
-}
-
-pub fn intersections_from_roads(roads: &BTreeSet<RoadID>, map: &Map) -> BTreeSet<IntersectionID> {
-    let mut results = BTreeSet::new();
-    for r in roads {
-        let r = map.get_r(*r);
-        for i in [r.src_i, r.dst_i] {
-            if results.contains(&i) {
-                continue;
-            }
-            if map.get_i(i).roads.iter().all(|r| roads.contains(r)) {
-                results.insert(i);
-            }
-        }
-    }
-    results
-}
-
-pub fn checkbox_per_mode(
-    ctx: &mut EventCtx,
-    app: &App,
-    current_state: &BTreeSet<TripMode>,
-) -> Widget {
-    let mut filters = Vec::new();
-    for m in TripMode::all() {
-        filters.push(
-            Toggle::colored_checkbox(
-                ctx,
-                m.ongoing_verb(),
-                color_for_mode(app, m),
-                current_state.contains(&m),
-            )
-            .margin_right(24),
-        );
-    }
-    Widget::custom_row(filters)
 }
 
 /// If you want a simulation to start after midnight, pass the result of this to

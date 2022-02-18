@@ -1,16 +1,16 @@
 //! Integration tests
 
-use std::fs::File;
 use std::io::Write;
 
 use anyhow::Result;
+use fs_err::File;
 use rand::seq::SliceRandom;
 
 use abstio::{CityName, MapName};
 use abstutil::Timer;
 use geom::{Distance, Duration, Time};
 use map_model::{IntersectionID, Map, Perimeter};
-use sim::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
+use synthpop::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
 
 fn main() -> Result<()> {
     abstutil::logger::setup();
@@ -104,7 +104,7 @@ fn smoke_test() -> Result<()> {
         let mut sim = sim::Sim::new(&map, opts);
         // Bit of an abuse of this, but just need to fix the rng seed.
         let mut rng = sim::SimFlags::for_test("smoke_test").make_rng();
-        scenario.instantiate(&mut sim, &map, &mut rng, &mut timer);
+        sim.instantiate(&scenario, &map, &mut rng, &mut timer);
         sim.timed_step(&map, Duration::hours(1), &mut None, &mut timer);
 
         #[allow(clippy::collapsible_if)]
@@ -222,7 +222,7 @@ fn test_lane_changing(map: &Map) -> Result<()> {
     opts.alerts = sim::AlertHandler::Silence;
     let mut sim = sim::Sim::new(map, opts);
     let mut rng = sim::SimFlags::for_test("test_lane_changing").make_rng();
-    scenario.instantiate(&mut sim, map, &mut rng, &mut Timer::throwaway());
+    sim.instantiate(&scenario, map, &mut rng, &mut Timer::throwaway());
     while !sim.is_done() {
         sim.tiny_step(map, &mut None);
     }
@@ -253,15 +253,21 @@ fn test_blockfinding() -> Result<()> {
         MapName::seattle("downtown"),
         MapName::seattle("lakeslice"),
         MapName::new("us", "phoenix", "tempe"),
-        MapName::new("gb", "leeds", "north"),
         MapName::new("gb", "bristol", "east"),
+        MapName::new("gb", "leeds", "north"),
         MapName::new("gb", "london", "camden"),
         MapName::new("gb", "london", "southwark"),
+        MapName::new("gb", "manchester", "levenshulme"),
     ] {
         let map = map_model::Map::load_synchronously(name.path(), &mut timer);
         let mut single_blocks = Perimeter::find_all_single_blocks(&map);
         let num_singles_originally = single_blocks.len();
-        single_blocks.retain(|x| x.clone().to_block(&map).is_ok());
+        // Collapse dead-ends first, so results match the LTN tool and blockfinder
+        single_blocks.retain(|x| {
+            let mut copy = x.clone();
+            copy.collapse_deadends();
+            copy.to_block(&map).is_ok()
+        });
         let num_singles_blockified = single_blocks.len();
 
         let partitions = Perimeter::partition_by_predicate(single_blocks, |r| {
@@ -270,7 +276,7 @@ fn test_blockfinding() -> Result<()> {
         let mut num_partial_merges = 0;
         let mut merged = Vec::new();
         for perimeters in partitions {
-            let newly_merged = Perimeter::merge_all(perimeters, false);
+            let newly_merged = Perimeter::merge_all(&map, perimeters, false);
             if newly_merged.len() > 1 {
                 num_partial_merges += 1;
             }

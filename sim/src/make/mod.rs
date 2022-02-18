@@ -4,20 +4,13 @@
 use rand::{RngCore, SeedableRng};
 use rand_xorshift::XorShiftRng;
 
-pub use self::external::{ExternalPerson, ExternalTrip, ExternalTripEndpoint, MapBorders};
 pub use self::generator::{BorderSpawnOverTime, ScenarioGenerator, SpawnOverTime};
 pub use self::load::SimFlags;
-pub use self::modifier::ScenarioModifier;
-pub use self::scenario::{IndividTrip, PersonSpec, Scenario, TripPurpose};
-pub use self::spawner::TripEndpoint;
 pub(crate) use self::spawner::{StartTripArgs, TripSpec};
 
 mod activity_model;
-mod external;
 mod generator;
 mod load;
-mod modifier;
-mod scenario;
 mod spawner;
 
 /// Need to explain this trick -- basically keeps consistency between two different simulations when

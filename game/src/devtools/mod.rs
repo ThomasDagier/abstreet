@@ -11,6 +11,7 @@ use widgetry::{Choice, EventCtx, Key, Line, Panel, SimpleState, State, Widget};
 use crate::app::{App, Transition};
 
 mod collisions;
+pub mod compare_counts;
 mod destinations;
 pub mod kml;
 mod polygon;
@@ -96,7 +97,13 @@ impl DevToolsMode {
 }
 
 impl SimpleState<App> for DevToolsMode {
-    fn on_click(&mut self, ctx: &mut EventCtx, app: &mut App, x: &str, _: &Panel) -> Transition {
+    fn on_click(
+        &mut self,
+        ctx: &mut EventCtx,
+        app: &mut App,
+        x: &str,
+        _: &mut Panel,
+    ) -> Transition {
         match x {
             "close" => Transition::Pop,
             "edit a polygon" => {

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use geom::{Duration, Percent};
-use sim::OrigPersonID;
+use synthpop::OrigPersonID;
 use widgetry::{EventCtx, Key, Line, Panel, SimpleState, State, Text, TextExt, Widget};
 
 use crate::app::App;
@@ -238,7 +238,13 @@ impl ChallengesPicker {
 }
 
 impl SimpleState<App> for ChallengesPicker {
-    fn on_click(&mut self, ctx: &mut EventCtx, app: &mut App, x: &str, _: &Panel) -> Transition {
+    fn on_click(
+        &mut self,
+        ctx: &mut EventCtx,
+        app: &mut App,
+        x: &str,
+        _: &mut Panel,
+    ) -> Transition {
         match x {
             "close" => Transition::Pop,
             "Introduction and tutorial" => Transition::Replace(Tutorial::start(ctx, app)),

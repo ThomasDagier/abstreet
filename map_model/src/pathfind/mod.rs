@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use geom::Duration;
 
 pub use self::engine::CreateEngine;
-pub use self::pathfinder::Pathfinder;
+pub use self::pathfinder::{Pathfinder, PathfinderCaching};
 pub use self::v1::{Path, PathRequest, PathStep};
 pub use self::v2::{PathStepV2, PathV2};
 pub use self::vehicles::vehicle_cost;
@@ -189,14 +189,15 @@ pub struct RoutingParams {
     #[serde(skip_serializing, skip_deserializing)]
     pub main_road_penalty: f64,
 
-    /// Don't cross these roads unless absolutely necessary to reach the destination. Only affects
-    /// vehicle routing, not pedestrian.
+    /// Don't allow crossing these roads at all. Only affects vehicle routing, not pedestrian.
+    ///
+    /// TODO The route may cross one of these roads if it's the start or end!
     // TODO Include in serde during the next full map importing
     #[serde(skip_serializing, skip_deserializing)]
     pub avoid_roads: BTreeSet<RoadID>,
 
-    /// Don't cross movements between these roads unless absolutely necessary to reach the
-    /// destination. Only affects vehicle routing, not pedestrian.
+    /// Don't allow movements between these roads at all. Only affects vehicle routing, not
+    /// pedestrian.
     #[serde(skip_serializing, skip_deserializing)]
     pub avoid_movements_between: BTreeSet<(RoadID, RoadID)>,
 }
