@@ -1,0 +1,37 @@
+POUR IMPORTER :   ./import.sh --raw --map --city=ch/geneva
+
+POUR LANCER :		cargo run --bin game --release
+   si ca marche pas -> cargo run --bin game -- --dev data/system/ch/geneva/maps/center.bin
+
+LES DOCS QUI CONCERNENT LES BUS:
+	https://github.com/a-b-street/abstreet/pull/819
+	https://github.com/a-b-street/abstreet/issues/372#issuecomment-974331401
+
+LA DOC GENERALE:
+	https://a-b-street.github.io/docs/tech/dev/index.html
+	
+LES AUTRES TRUCS UTILES:
+	viewer gtfs: https://bl.ocks.org/kaezarrex/7a100491d541031b6c24
+	les opendata: https://opentransportdata.swiss/fr/
+	
+AVANCEMENT ACTUEL:
+	l'import fonctionne pour la plupart des bus -> voir les erreurs au moment de l'importation pour savoir pourquoi certaines lignes ne sont pas ajoutées.
+	j'ai du modifier le fichier convert_osm/src/elevation.rs -> faut trouver d'où vient le problème (j'ai laissé le fichier d'origine mais il est rennomé)
+	
+	sur la création des shapes:
+	- pour l'instant l'apporche pour construire les shapes c'est de parcourir tous les trajets de toutes les lignes (voir trips.txt).
+	  quand on estime que deux trajets sont les mêmes, ils ont le même shape_id
+	  au moment de créer les shapes (voir shapes.txt), on le fait pour chaque shape dans le fichier trips.txt (donc on va avoir une shape pour tout un tas de trajets)
+	  -> le problème (qui n'en est pas forcément un), c'est qu'on risque d'avoir plusieurs shapes pour la même ligne (exemple de la ligne 15 qui démarre à Blandonnet le matin et à Nation le reste de la journée)
+	     au moment de l'import, Dustin en choisira une qui n'est pas forcément la bonne (en tout cas pas celle utilisée en plein jour)
+	  -> quand je construit une shape, j'essaye de prendre celle qui a un trajet à midi mais c'est pas forcément le cas à chaque fois
+	  -> on devrait décider "manuellement" la shape à prendre pour chaque ligne ?
+	  -> on devrait stocker uniquement une shape par ligne -> celle qui est à midi
+
+	il faudrait pouvoir comparer les lignes avec ces sites pour vérifier que c'est cohérent:
+		https://moovitapp.com/index/fr/transport_en_commun-lines-Gen%C3%A8ve-3522-856678
+		https://www.tpg.ch/sites/default/files/2021-11/plan_geographique_tpg-2021.12.12.pdf
+	
+	il faudrait aussi pouvoir comparer les temps de trajets et les départs/arrivées aux arrêts pour estimer un pourcentage de validité
+	
+	  
