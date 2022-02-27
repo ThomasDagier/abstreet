@@ -34,4 +34,6 @@ AVANCEMENT ACTUEL:
 	
 	il faudrait aussi pouvoir comparer les temps de trajets et les départs/arrivées aux arrêts pour estimer un pourcentage de validité
 	
+-> IL FAUT REFAIRE LE FICHIER SHAPES.TXT
+	
 	  

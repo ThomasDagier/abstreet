@@ -10,6 +10,8 @@ use kml::{ExtraShape, ExtraShapes};
 use map_model::raw::{RawMap, RawTransitRoute, RawTransitStop};
 use map_model::PathConstraints;
 
+use regex::Regex;
+
 pub fn import(map: &mut RawMap) -> Result<()> {
     // Collect metadata about routes
     for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/routes.txt"))?)
@@ -127,8 +129,31 @@ pub fn import(map: &mut RawMap) -> Result<()> {
 
     // Assign the stops for every route
     let mut stop_ids = HashSet::new();
-    for route in &mut map.transit_routes {
-        let trip_id = route_to_trip[&RouteID(route.gtfs_id.clone())];
+    for route in &mut map.transit_routes {        
+        //let trip_id: &TripID = route_to_trip[&RouteID(route.gtfs_id.clone())];
+
+        // ADDED THIS CODE TO SELECT A SPECIFIC TRIP FROM ALL AVAILABLE 
+        let mut trip_id: &TripID = {
+            // had to add regex on top of the file and in the cargo.toml
+            let re = Regex::new(r"16:[0-9]{2}:[0-9]{2}").unwrap();
+            let mut kek: String = "kek".to_string();
+            for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/stop_times.txt"))?).deserialize() {
+                let rec: StopTime2 = rec?;
+                // the trip selected is taken at 16h so we make sure this is the "typical" trip
+                if re.is_match(&rec.departure_time[..]) && rec.trip_id.to_string().contains(&RouteID(route.gtfs_id.clone()).to_string()) {
+                    kek = rec.trip_id.to_string();
+                    break;
+                }
+            }
+            &TripID(kek)
+        };
+        // if no trip were found (wich means the bus is a night bus) we select any trip
+        if trip_id.to_string() == "kek" {
+            trip_id = route_to_trip[&RouteID(route.gtfs_id.clone())];
+        }
+        println!("{} -> {}", route.gtfs_id.clone(), trip_id);
+        //
+
         let mut stops = trip_to_stops.remove(&trip_id).unwrap_or_else(Vec::new);
         stops.sort_by_key(|(_, seq)| *seq);
         for (stop_id, _) in stops {
@@ -173,6 +198,18 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         dump_kml(map);
     }
 
+    // PRINT ALL STOPS FOR EACH BUS LINE
+    println!("");
+    for kek in map.transit_routes.iter() {
+        println!("{}", kek.short_name);
+        for s in kek.stops.iter() {
+            println!("{:?}", s);
+        }
+        println!("");
+    }
+
+    // We CAN TRY TO CHANGE transit.rs (line 28) TO ALLOW MORE STOPS TO BE CREATED
+
     Ok(())
 }
 
@@ -184,6 +221,19 @@ struct TripID(String);
 struct StopID(String);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 struct RouteID(String);
+
+// ADDED TO USE A .to_string FOR TripID AND RouteID
+impl std::fmt::Display for TripID {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::fmt::Display for RouteID {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Deserialize)]
 struct Route {
@@ -222,6 +272,13 @@ struct StopTime {
     trip_id: TripID,
     stop_id: StopID,
     stop_sequence: usize,
+}
+
+// ADDED AN OTHER StopTime STRUCT AS WE WANNA USE THE departure_time FIELD TO SELECT A TRIP
+#[derive(Deserialize)]
+struct StopTime2 {
+    trip_id: TripID,
+    departure_time: String,
 }
 
 fn dump_kml(map: &RawMap) {

@@ -587,6 +587,7 @@ dependencies = [
  "kml",
  "log",
  "map_model",
+ "regex",
  "roxmltree",
  "serde",
 ]
