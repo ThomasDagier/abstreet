@@ -1,0 +1,112 @@
+Country code: ca
+Input: tpg.zip
+URL: null
+Output: output
+Path to archive storage directory: null
+Table loaders: attributions.txt levels.txt transfers.txt frequencies.txt calendar.txt pathways.txt stop_times.txt fare_rules.txt calendar_dates.txt routes.txt shapes.txt trips.txt stops.txt fare_attributes.txt feed_info.txt translations.txt agency.txt
+Validators:
+Single-entity validators
+	GtfsRoute: RouteColorContrastValidator RouteNameValidator 
+	GtfsShape: GtfsShapeLatLonValidator 
+	GtfsStopTime: GtfsStopTimeEndRangeValidator 
+	GtfsAttribution: AttributionWithoutRoleValidator 
+	GtfsCalendar: GtfsCalendarEndRangeValidator 
+	GtfsStop: StopNameValidator GtfsStopLatLonValidator LocationTypeSingleEntityValidator 
+	GtfsFeedInfo: FeedServiceDateValidator FeedExpirationDateValidator GtfsFeedInfoEndRangeValidator 
+	GtfsPathway: PathwayLoopValidator 
+	GtfsFrequency: GtfsFrequencyEndRangeValidator 
+Single-file validators
+	GtfsFareRuleTableContainer: DuplicateFareRuleZoneIdFieldsValidator 
+	GtfsFrequencyTableContainer: OverlappingFrequencyValidator 
+	GtfsAgencyTableContainer: AgencyConsistencyValidator 
+	GtfsStopTimeTableContainer: MissingTripEdgeValidator StopTimeIncreasingDistanceValidator StopTimeArrivalAndDepartureTimeValidator TimepointTimeValidator 
+	GtfsShapeTableContainer: ShapeIncreasingDistanceValidator 
+	GtfsStopTableContainer: ParentLocationTypeValidator 
+	GtfsRouteTableContainer: DuplicateRouteNameValidator 
+Multi-file validators
+	PathwayReachableLocationValidator GtfsStopLevelIdForeignKeyValidator GtfsRouteAgencyIdForeignKeyValidator GtfsStopParentStationForeignKeyValidator LocationHasStopTimesValidator TripUsageValidator GtfsStopTimeTripIdForeignKeyValidator GtfsFareRuleContainsIdForeignKeyValidator StopZoneIdValidator TripUsabilityValidator GtfsTransferToStopIdForeignKeyValidator GtfsPathwayToStopIdForeignKeyValidator GtfsFareRuleRouteIdForeignKeyValidator TripAgencyIdValidator GtfsAttributionRouteIdForeignKeyValidator MissingCalendarAndCalendarDateValidator MatchingFeedAndAgencyLangValidator GtfsAttributionTripIdForeignKeyValidator TranslationFieldAndReferenceValidator ShapeToStopMatchingValidator PathwayDanglingGenericNodeValidator GtfsFrequencyTripIdForeignKeyValidator StopTimeTravelSpeedValidator GtfsPathwayFromStopIdForeignKeyValidator PathwayEndpointTypeValidator UrlConsistencyValidator BlockTripsWithOverlappingStopTimesValidator GtfsFareRuleDestinationIdForeignKeyValidator GtfsFareRuleFareIdForeignKeyValidator ShapeUsageValidator MissingLevelIdValidator GtfsTripServiceIdForeignKeyValidator GtfsAttributionAgencyIdForeignKeyValidator GtfsTripShapeIdForeignKeyValidator GtfsStopTimeStopIdForeignKeyValidator GtfsTransferFromStopIdForeignKeyValidator GtfsTripRouteIdForeignKeyValidator GtfsFareAttributeAgencyIdForeignKeyValidator GtfsFareRuleOriginIdForeignKeyValidator 
+
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsFeedLoader loadAndValidate
+INFO: Loading in 1 threads
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsAgencyTableLoader load
+INFO: Cache for agency.txt agency_lang: size = 1, lookup count = 1, hits = 0.00%, misses = 100.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsCalendarTableLoader load
+INFO: Cache for calendar.txt start_date: size = 2, lookup count = 16, hits = 87.50%, misses = 12.50%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsCalendarTableLoader load
+INFO: Cache for calendar.txt end_date: size = 2, lookup count = 16, hits = 87.50%, misses = 12.50%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsCalendarDateTableLoader load
+INFO: Cache for calendar_dates.txt service_id: size = 8, lookup count = 334, hits = 97.60%, misses = 2.40%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsCalendarDateTableLoader load
+INFO: Cache for calendar_dates.txt date: size = 262, lookup count = 334, hits = 21.56%, misses = 78.44%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsFeedInfoTableLoader load
+INFO: Cache for feed_info.txt feed_lang: size = 1, lookup count = 2, hits = 50.00%, misses = 50.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsFeedInfoTableLoader load
+INFO: Cache for feed_info.txt default_lang: size = 1, lookup count = 2, hits = 50.00%, misses = 50.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsFeedInfoTableLoader load
+INFO: Cache for feed_info.txt feed_start_date: size = 2, lookup count = 2, hits = 0.00%, misses = 100.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsFeedInfoTableLoader load
+INFO: Cache for feed_info.txt feed_end_date: size = 2, lookup count = 2, hits = 0.00%, misses = 100.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsRouteTableLoader load
+INFO: Cache for routes.txt agency_id: size = 1, lookup count = 95, hits = 98.95%, misses = 1.05%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsRouteTableLoader load
+INFO: Cache for routes.txt route_color: size = 0, lookup count = 190, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsRouteTableLoader load
+INFO: Cache for routes.txt route_text_color: size = 0, lookup count = 190, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsShapeTableLoader load
+INFO: Cache for shapes.txt shape_id: size = 513, lookup count = 11518, hits = 95.55%, misses = 4.45%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTableLoader load
+INFO: Cache for stops.txt zone_id: size = 0, lookup count = 863, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTableLoader load
+INFO: Cache for stops.txt parent_station: size = 0, lookup count = 863, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:02 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTableLoader load
+INFO: Cache for stops.txt level_id: size = 0, lookup count = 863, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:03 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Reading stop_times.txt, row 200000
+Feb 22, 2022 10:59:03 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Reading stop_times.txt, row 400000
+Feb 22, 2022 10:59:03 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Reading stop_times.txt, row 600000
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Reading stop_times.txt, row 800000
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Cache for stop_times.txt trip_id: size = 41965, lookup count = 991991, hits = 95.77%, misses = 4.23%
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Cache for stop_times.txt arrival_time: size = 1504, lookup count = 1983982, hits = 99.92%, misses = 0.08%
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Cache for stop_times.txt departure_time: size = 1504, lookup count = 1983982, hits = 99.92%, misses = 0.08%
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Cache for stop_times.txt stop_id: size = 863, lookup count = 991991, hits = 99.91%, misses = 0.09%
+Feb 22, 2022 10:59:04 AM org.mobilitydata.gtfsvalidator.table.GtfsStopTimeTableLoader load
+INFO: Cache for stop_times.txt stop_headsign: size = 0, lookup count = 991991, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:05 AM org.mobilitydata.gtfsvalidator.table.GtfsTransferTableLoader load
+INFO: Cache for transfers.txt from_stop_id: size = 164, lookup count = 330, hits = 50.30%, misses = 49.70%
+Feb 22, 2022 10:59:05 AM org.mobilitydata.gtfsvalidator.table.GtfsTransferTableLoader load
+INFO: Cache for transfers.txt to_stop_id: size = 164, lookup count = 330, hits = 50.30%, misses = 49.70%
+Feb 22, 2022 10:59:06 AM org.mobilitydata.gtfsvalidator.table.GtfsTripTableLoader load
+INFO: Reading trips.txt, row 200000
+Feb 22, 2022 10:59:06 AM org.mobilitydata.gtfsvalidator.table.GtfsTripTableLoader load
+INFO: Cache for trips.txt route_id: size = 95, lookup count = 335720, hits = 99.97%, misses = 0.03%
+Feb 22, 2022 10:59:06 AM org.mobilitydata.gtfsvalidator.table.GtfsTripTableLoader load
+INFO: Cache for trips.txt service_id: size = 8, lookup count = 335720, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:06 AM org.mobilitydata.gtfsvalidator.table.GtfsTripTableLoader load
+INFO: Cache for trips.txt block_id: size = 0, lookup count = 335720, hits = 100.00%, misses = 0.00%
+Feb 22, 2022 10:59:06 AM org.mobilitydata.gtfsvalidator.table.GtfsTripTableLoader load
+INFO: Cache for trips.txt shape_id: size = 551, lookup count = 335720, hits = 99.84%, misses = 0.16%
+Validation took 10.780 seconds
+agency.txt	1
+attributions.txt	MISSING_FILE
+calendar.txt	8
+calendar_dates.txt	334
+fare_attributes.txt	MISSING_FILE
+fare_rules.txt	MISSING_FILE
+feed_info.txt	1
+frequencies.txt	MISSING_FILE
+levels.txt	MISSING_FILE
+pathways.txt	MISSING_FILE
+routes.txt	95
+shapes.txt	11518
+stop_times.txt	991991
+stops.txt	863
+transfers.txt	330
+translations.txt	MISSING_FILE
+trips.txt	335720

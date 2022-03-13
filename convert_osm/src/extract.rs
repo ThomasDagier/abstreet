@@ -49,7 +49,9 @@ pub fn extract_osm(
     if let Some(way) = doc.ways.get_mut(&WayID(332355467)) {
         way.tags.insert("junction", "intersection");
     }
-
+    if let Some(way) = doc.ways.get_mut(&WayID(47188277)) {
+        way.tags.insert("psv", "yes");
+    }
     if clip_path.is_none() {
         // Use the boundary from .osm.
         map.gps_bounds = doc.gps_bounds.clone();
@@ -365,9 +367,9 @@ fn is_road(tags: &mut Tags, opts: &Options) -> bool {
         return true;
     }
     // Explicitly need this to avoid overlapping geometry in Berlin.
-    if tags.is("railway", "tram") {
-        return false;
-    }
+    //if tags.is("railway", "tram") {
+    //    return false;
+    //}
 
     let highway = if let Some(x) = tags.get(osm::HIGHWAY) {
         if x == "construction" {
