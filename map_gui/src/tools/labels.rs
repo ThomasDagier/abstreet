@@ -4,70 +4,100 @@ use aabb_quadtree::QuadTree;
 use lazy_static::lazy_static;
 use regex::Regex;
 
-use geom::{Distance, Pt2D};
+use geom::{Angle, Bounds, Distance, Polygon, Pt2D};
 use map_model::{osm, Road};
 use widgetry::{Color, Drawable, GeomBatch, GfxCtx, Line, Text};
 
 use crate::AppLike;
 
 /// Labels roads when unzoomed. Label size and frequency depends on the zoom level.
+///
+/// By default, the text is white; it works well on dark backgrounds.
 pub struct DrawRoadLabels {
-    per_zoom: RefCell<[Option<Drawable>; 11]>,
+    per_zoom: RefCell<Option<PerZoom>>,
     include_roads: Box<dyn Fn(&Road) -> bool>,
+    fg_color: Color,
+    outline_color: Color,
+}
+
+// TODO There may be an off-by-one floating around here. Watch what this does at extremely low zoom
+// levels near 0.
+struct PerZoom {
+    draw_per_zoom: Vec<Option<Drawable>>,
+    step_size: f64,
+}
+
+impl PerZoom {
+    // We assume min_zoom_for_detail doesn't change over the lifetime of this
+    fn new(min_zoom_for_detail: f64) -> Self {
+        let step_size = 0.1;
+        let num_buckets = (min_zoom_for_detail / step_size) as usize;
+        Self {
+            draw_per_zoom: std::iter::repeat_with(|| None).take(num_buckets).collect(),
+            step_size,
+        }
+    }
+
+    // Takes the current canvas zoom, rounds it to the nearest step_size, and returns the index of
+    // the bucket to fill out
+    fn discretize_zoom(&self, zoom: f64) -> (f64, usize) {
+        let bucket = (zoom / self.step_size).floor() as usize;
+        let rounded = (bucket as f64) * self.step_size;
+        (rounded, bucket)
+    }
 }
 
 impl DrawRoadLabels {
     /// Label roads that the predicate approves
-    pub fn new(include_roads: Box<dyn Fn(&Road) -> bool>) -> DrawRoadLabels {
-        DrawRoadLabels {
+    pub fn new(include_roads: Box<dyn Fn(&Road) -> bool>) -> Self {
+        Self {
             per_zoom: Default::default(),
             include_roads,
+            fg_color: Color::WHITE,
+            outline_color: Color::BLACK,
         }
     }
 
     /// Only label major roads
-    pub fn only_major_roads() -> DrawRoadLabels {
-        DrawRoadLabels::new(Box::new(|r| {
+    pub fn only_major_roads() -> Self {
+        Self::new(Box::new(|r| {
             r.get_rank() != osm::RoadRank::Local && !r.is_light_rail()
         }))
     }
 
+    pub fn light_background(mut self) -> Self {
+        self.fg_color = Color::BLACK;
+        self.outline_color = Color::WHITE;
+        self
+    }
+
     pub fn draw(&self, g: &mut GfxCtx, app: &dyn AppLike) {
-        let (zoom, idx) = DrawRoadLabels::discretize_zoom(g.canvas.cam_zoom);
-        let value = &mut self.per_zoom.borrow_mut()[idx];
-        if value.is_none() {
-            debug!("computing DrawRoadLabels(zoom: {}, idx: {})", zoom, idx);
-            *value = Some(DrawRoadLabels::render(g, app, &self.include_roads, zoom));
+        let mut per_zoom = self.per_zoom.borrow_mut();
+        if per_zoom.is_none() {
+            *per_zoom = Some(PerZoom::new(g.canvas.settings.min_zoom_for_detail));
         }
-        g.redraw(value.as_ref().unwrap());
+        let per_zoom = per_zoom.as_mut().unwrap();
+
+        let (zoom, idx) = per_zoom.discretize_zoom(g.canvas.cam_zoom);
+        let draw = &mut per_zoom.draw_per_zoom[idx];
+        if draw.is_none() {
+            *draw = Some(self.render(g, app, zoom));
+        }
+        g.redraw(draw.as_ref().unwrap());
     }
 
-    fn discretize_zoom(zoom: f64) -> (f64, usize) {
-        // TODO Maybe more values between 1.0 and min_zoom_for_detail?
-        if zoom >= 1.0 {
-            return (1.0, 10);
-        }
-        let rounded = (zoom * 10.0).round();
-        let idx = rounded as usize;
-        (rounded / 10.0, idx)
-    }
-
-    fn render(
-        g: &mut GfxCtx,
-        app: &dyn AppLike,
-        include_roads: &dyn Fn(&Road) -> bool,
-        zoom: f64,
-    ) -> Drawable {
+    fn render(&self, g: &mut GfxCtx, app: &dyn AppLike, zoom: f64) -> Drawable {
         let mut batch = GeomBatch::new();
         let map = app.map();
 
-        let text_scale = 1.0 + 2.0 * (1.0 - zoom);
-        //println!("at zoom {}, scale labels {}", zoom, text_scale);
+        // We want the effective size of the text to stay around 1
+        // effective = zoom * text_scale
+        let text_scale = 1.0 / zoom;
 
         let mut quadtree = QuadTree::default(map.get_bounds().as_bbox());
 
         'ROAD: for r in map.all_roads() {
-            if !include_roads(r) || r.length() < Distance::meters(30.0) {
+            if !(self.include_roads)(r) || r.length() < Distance::meters(30.0) {
                 continue;
             }
 
@@ -77,25 +107,6 @@ impl DrawRoadLabels {
                 continue;
             };
             let (pt, angle) = r.center_pts.must_dist_along(r.length() / 2.0);
-
-            fn cheaply_overestimate_bounds(
-                text: &str,
-                text_scale: f64,
-                center: Pt2D,
-                angle: geom::Angle,
-            ) -> geom::Bounds {
-                // assume all chars are bigger than largest possible char
-                let letter_width = 30.0 * text_scale;
-                let letter_height = 30.0 * text_scale;
-
-                geom::Polygon::rectangle_centered(
-                    center,
-                    Distance::meters(letter_width * text.len() as f64),
-                    Distance::meters(letter_height),
-                )
-                .rotate(angle.reorient())
-                .get_bounds()
-            }
 
             // Don't get too close to other labels.
             let big_bounds = cheaply_overestimate_bounds(&name, text_scale, pt, angle);
@@ -108,8 +119,8 @@ impl DrawRoadLabels {
             let txt = Text::from(
                 Line(&name)
                     .big_heading_plain()
-                    .fg(Color::WHITE)
-                    .outlined(Color::BLACK),
+                    .fg(self.fg_color)
+                    .outlined(self.outline_color),
             );
             let txt_batch = txt
                 .render_autocropped(g)
@@ -205,4 +216,18 @@ mod tests {
             }
         }
     }
+}
+
+fn cheaply_overestimate_bounds(text: &str, text_scale: f64, center: Pt2D, angle: Angle) -> Bounds {
+    // assume all chars are bigger than largest possible char
+    let letter_width = 30.0 * text_scale;
+    let letter_height = 30.0 * text_scale;
+
+    Polygon::rectangle_centered(
+        center,
+        Distance::meters(letter_width * text.len() as f64),
+        Distance::meters(letter_height),
+    )
+    .rotate(angle.reorient())
+    .get_bounds()
 }

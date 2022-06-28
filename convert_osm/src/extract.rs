@@ -2,19 +2,21 @@ use std::collections::{HashMap, HashSet};
 
 use osm::{NodeID, OsmID, RelationID, WayID};
 
-use abstio::MapName;
+use abstio::{CityName, MapName};
 use abstutil::{Tags, Timer};
 use geom::{Distance, FindClosest, HashablePt2D, Polygon, Pt2D, Ring};
 use kml::{ExtraShape, ExtraShapes};
-use map_model::raw::{RawArea, RawBuilding, RawMap, RawParkingLot, RawRoad, RestrictionType};
-use map_model::{osm, Amenity, AreaType, Direction, DrivingSide, NamePerLanguage};
+use raw_map::{
+    osm, Amenity, AreaType, Direction, DrivingSide, NamePerLanguage, RawArea, RawBuilding, RawMap,
+    RawParkingLot, RestrictionType,
+};
 
 use crate::osm_geom::{get_multipolygon_members, glue_multipolygon, multipoly_geometry};
 use crate::Options;
 
 pub struct OsmExtract {
-    /// Unsplit roads
-    pub roads: Vec<(WayID, RawRoad)>,
+    /// Unsplit roads. These aren't RawRoads yet, because they may not obey those invariants.
+    pub roads: Vec<(WayID, Vec<Pt2D>, Tags)>,
     /// Traffic signals to the direction they apply
     pub traffic_signals: HashMap<HashablePt2D, Direction>,
     pub osm_node_ids: HashMap<HashablePt2D, NodeID>,
@@ -49,9 +51,7 @@ pub fn extract_osm(
     if let Some(way) = doc.ways.get_mut(&WayID(332355467)) {
         way.tags.insert("junction", "intersection");
     }
-    if let Some(way) = doc.ways.get_mut(&WayID(47188277)) {
-        way.tags.insert("psv", "yes");
-    }
+
     if clip_path.is_none() {
         // Use the boundary from .osm.
         map.gps_bounds = doc.gps_bounds.clone();
@@ -101,7 +101,7 @@ pub fn extract_osm(
 
         way.tags.insert(osm::OSM_WAY_ID, id.0.to_string());
 
-        if is_road(&mut way.tags, opts) {
+        if is_road(&mut way.tags, opts, &map.name) {
             // TODO Hardcoding these overrides. OSM is correct, these don't have
             // sidewalks; there's a crosswalk mapped. But until we can snap sidewalks properly, do
             // this to prevent the sidewalks from being disconnected.
@@ -109,20 +109,7 @@ pub fn extract_osm(
                 way.tags.insert(osm::SIDEWALK, "right");
             }
 
-            out.roads.push((
-                id,
-                RawRoad {
-                    center_points: way.pts.clone(),
-                    osm_tags: way.tags.clone(),
-                    turn_restrictions: Vec::new(),
-                    complicated_turn_restrictions: Vec::new(),
-                    percent_incline: 0.0,
-                    // Start assuming there's a crosswalk everywhere, and maybe filter it down
-                    // later
-                    crosswalk_forward: true,
-                    crosswalk_backward: true,
-                },
-            ));
+            out.roads.push((id, way.pts.clone(), way.tags.clone()));
             continue;
         } else if way.tags.is(osm::HIGHWAY, "service") {
             // If we got here, is_road didn't interpret it as a normal road
@@ -354,7 +341,7 @@ pub fn extract_osm(
     out
 }
 
-fn is_road(tags: &mut Tags, opts: &Options) -> bool {
+fn is_road(tags: &mut Tags, opts: &Options, name: &MapName) -> bool {
     if tags.is("area", "yes") {
         return false;
     }
@@ -366,10 +353,6 @@ fn is_road(tags: &mut Tags, opts: &Options) -> bool {
     if tags.is("railway", "rail") && opts.include_railroads {
         return true;
     }
-    // Explicitly need this to avoid overlapping geometry in Berlin.
-    //if tags.is("railway", "tram") {
-    //    return false;
-    //}
 
     let highway = if let Some(x) = tags.get(osm::HIGHWAY) {
         if x == "construction" {
@@ -507,7 +490,15 @@ fn is_road(tags: &mut Tags, opts: &Options) -> bool {
             {
                 tags.insert(osm::SIDEWALK, "both");
             }
+            // Hack for Geneva, which maps sidewalks as separate ways
+            if name.city == CityName::new("ch", "geneva") {
+                tags.insert(osm::SIDEWALK, "both");
+            }
         } else {
+            tags.insert(osm::SIDEWALK, "both");
+        }
+
+        if tags.is_any(osm::HIGHWAY, vec!["service"]) {
             tags.insert(osm::SIDEWALK, "both");
         }
     }
@@ -574,30 +565,30 @@ fn get_area_type(tags: &Tags) -> Option<AreaType> {
 
 // Look for any service roads that collide with parking lots, and treat them as parking aisles
 // instead.
-fn find_parking_aisles(map: &mut RawMap, roads: &mut Vec<(WayID, RawRoad)>) {
+fn find_parking_aisles(map: &mut RawMap, roads: &mut Vec<(WayID, Vec<Pt2D>, Tags)>) {
     let mut closest: FindClosest<usize> = FindClosest::new(&map.gps_bounds.to_bounds());
     for (idx, lot) in map.parking_lots.iter().enumerate() {
         closest.add(idx, lot.polygon.points());
     }
     let mut keep_roads = Vec::new();
     let mut parking_aisles = Vec::new();
-    for (id, road) in roads.drain(..) {
-        if !road.osm_tags.is(osm::HIGHWAY, "service") {
-            keep_roads.push((id, road));
+    for (id, pts, osm_tags) in roads.drain(..) {
+        if !osm_tags.is(osm::HIGHWAY, "service") {
+            keep_roads.push((id, pts, osm_tags));
             continue;
         }
         // TODO This code is repeated later in make/parking_lots.rs, but oh well.
 
         // Use the center of all the aisle points to match it to lots
         let candidates: Vec<usize> = closest
-            .all_close_pts(Pt2D::center(&road.center_points), Distance::meters(500.0))
+            .all_close_pts(Pt2D::center(&pts), Distance::meters(500.0))
             .into_iter()
             .map(|(idx, _, _)| idx)
             .collect();
-        if service_road_crosses_parking_lot(map, &road, candidates) {
-            parking_aisles.push((id, road.center_points.clone()));
+        if service_road_crosses_parking_lot(map, &pts, candidates) {
+            parking_aisles.push((id, pts));
         } else {
-            keep_roads.push((id, road));
+            keep_roads.push((id, pts, osm_tags));
         }
     }
     roads.extend(keep_roads);
@@ -606,8 +597,8 @@ fn find_parking_aisles(map: &mut RawMap, roads: &mut Vec<(WayID, RawRoad)>) {
     }
 }
 
-fn service_road_crosses_parking_lot(map: &RawMap, road: &RawRoad, candidates: Vec<usize>) -> bool {
-    if let Ok((polylines, rings)) = Ring::split_points(&road.center_points) {
+fn service_road_crosses_parking_lot(map: &RawMap, pts: &[Pt2D], candidates: Vec<usize>) -> bool {
+    if let Ok((polylines, rings)) = Ring::split_points(pts) {
         for pl in polylines {
             for idx in &candidates {
                 if map.parking_lots[*idx].polygon.clip_polyline(&pl).is_some() {

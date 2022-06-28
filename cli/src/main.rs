@@ -11,7 +11,6 @@ mod geojson_to_osmosis;
 mod import_grid2demand;
 mod import_scenario;
 mod one_step_import;
-mod osm2lanes;
 
 use std::io::Write;
 
@@ -47,17 +46,23 @@ enum Command {
     AugmentScenario {
         /// The path to a scenario to augment. This will be modified in-place.
         ///
-        /// This tool isn't very smart about detecting if a scenario already has these extra trips added
-        /// in; be careful about running this on the correct input.
+        /// This tool isn't very smart about detecting if a scenario already has these extra trips
+        /// added in; be careful about running this on the correct input.
         #[structopt(long)]
         input_scenario: String,
         /// For people with only a single trip, add a return trip back home sometime 4-12 hours
         /// later
         #[structopt(long)]
         add_return_trips: bool,
-        /// Before a person's final trp home, insert a round-trip to a nearby cafe or restaurant
+        /// Before a person's final trip home, insert a round-trip to a nearby cafe or restaurant
         #[structopt(long)]
         add_lunch_trips: bool,
+        /// A JSON list of modifiers to transform the scenario. These can be generated with the GUI.
+        #[structopt(long, parse(try_from_str = parse_modifiers), default_value = "[]")]
+        scenario_modifiers: ModifierList,
+        /// Delete cancelled trips, and delete people with no remaining trips.
+        #[structopt(long)]
+        delete_cancelled_trips: bool,
         /// A seed for generating random numbers
         #[structopt(long, default_value = "42")]
         rng_seed: u64,
@@ -211,13 +216,21 @@ enum Command {
         #[structopt(flatten)]
         job: Job,
     },
-    /// Generates JSON test cases for osm2lanes.
-    #[structopt(name = "osm2lanes")]
-    OSM2Lanes {
-        /// The path to a map file
+    /// Simulate a full day of a scenario, and write the "prebaked results," so the UI can later be
+    /// used for A/B testing.
+    #[structopt(name = "prebake-scenario")]
+    PrebakeScenario {
+        /// The path to a scenario file
         #[structopt()]
-        map_path: String,
+        scenario_path: String,
     },
+}
+
+// See https://github.com/TeXitoi/structopt/issues/94
+type ModifierList = Vec<synthpop::ScenarioModifier>;
+
+fn parse_modifiers(x: &str) -> Result<ModifierList> {
+    abstutil::from_json(&x.to_string().into_bytes())
 }
 
 #[tokio::main]
@@ -245,8 +258,17 @@ async fn main() -> Result<()> {
             input_scenario,
             add_return_trips,
             add_lunch_trips,
+            scenario_modifiers,
+            delete_cancelled_trips,
             rng_seed,
-        } => augment_scenario::run(input_scenario, add_return_trips, add_lunch_trips, rng_seed),
+        } => augment_scenario::run(
+            input_scenario,
+            add_return_trips,
+            add_lunch_trips,
+            scenario_modifiers,
+            delete_cancelled_trips,
+            rng_seed,
+        ),
         Command::ClipOSM {
             pbf_path,
             clip_path,
@@ -281,7 +303,7 @@ async fn main() -> Result<()> {
             one_step_import::run(
                 geojson_path,
                 map_name,
-                drive_on_left,
+                driving_side(drive_on_left),
                 use_geofabrik,
                 filter_crosswalks,
                 create_uk_travel_demand_model,
@@ -299,7 +321,7 @@ async fn main() -> Result<()> {
             importer::oneshot(
                 osm_input,
                 clip_path,
-                drive_on_left,
+                driving_side(drive_on_left),
                 filter_crosswalks,
                 create_uk_travel_demand_model,
                 opts,
@@ -312,7 +334,7 @@ async fn main() -> Result<()> {
         } => importer::regenerate_everything(shard_num, num_shards).await,
         Command::RegenerateEverythingExternally => regenerate_everything_externally()?,
         Command::Import { job } => job.run(&mut Timer::new("import one city")).await,
-        Command::OSM2Lanes { map_path } => osm2lanes::run(map_path),
+        Command::PrebakeScenario { scenario_path } => prebake_scenario(scenario_path),
     }
     Ok(())
 }
@@ -372,6 +394,7 @@ fn regenerate_everything_externally() -> Result<()> {
     let path = "regenerate.sh";
     let mut f = File::create(path)?;
     writeln!(f, "#!/bin/sh")?;
+    writeln!(f, "set -e")?;
     writeln!(f, "pueue parallel 16")?;
     for city in CityName::list_all_cities_from_importer_config() {
         let job = Job::full_for_city(city);
@@ -386,4 +409,19 @@ fn regenerate_everything_externally() -> Result<()> {
     println!("pueue status | grep Success | wc -l");
     println!("For the long-tail: pueue status | grep Running");
     Ok(())
+}
+
+fn prebake_scenario(path: String) {
+    let mut timer = Timer::new("prebake scenario");
+    let scenario: synthpop::Scenario = abstio::must_read_object(path, &mut timer);
+    let map = map_model::Map::load_synchronously(scenario.map_name.path(), &mut timer);
+    sim::prebake::prebake(&map, scenario, &mut timer);
+}
+
+fn driving_side(drive_on_left: bool) -> map_model::DrivingSide {
+    if drive_on_left {
+        map_model::DrivingSide::Left
+    } else {
+        map_model::DrivingSide::Right
+    }
 }

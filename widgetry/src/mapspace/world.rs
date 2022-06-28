@@ -36,7 +36,8 @@ pub enum WorldOutcome<ID: ObjectID> {
     /// A left click occurred while not hovering on any object
     ClickedFreeSpace(Pt2D),
     /// An object is being dragged. The given offsets are relative to the previous dragging event.
-    /// The current position of the cursor is included.
+    /// The current position of the cursor is included. If you're dragging a large object, applying
+    /// the offset will likely feel more natural than centering on the cursor.
     Dragging {
         obj: ID,
         dx: f64,
@@ -47,6 +48,13 @@ pub enum WorldOutcome<ID: ObjectID> {
     Keypress(&'static str, ID),
     /// A hoverable object was clicked
     ClickedObject(ID),
+    /// The object being hovered on changed from (something before, to something after). Note this
+    /// transition may also occur outside of `event` -- such as during `delete` or `initialize_hover`.
+    ///
+    /// TODO Bug in the map_editor: If you delete one object, then the caller does initialize_hover
+    /// and we immediately wind up on another road beneath, we don't detect this and start showing
+    /// road points.
+    HoverChanged(Option<ID>, Option<ID>),
     /// Nothing interesting happened
     Nothing,
 }
@@ -55,11 +63,6 @@ impl<I: ObjectID> WorldOutcome<I> {
     /// If the outcome references some ID, transform it to another type. This is useful when some
     /// component owns a World that contains a few different types of objects, some of which are
     /// managed by another component that only cares about its IDs.
-    pub fn map_id<O: ObjectID, F: Fn(I) -> O>(self, f: F) -> WorldOutcome<O> {
-        self.maybe_map_id(|id| Some(f(id))).unwrap()
-    }
-
-    /// Like `map_id`, but the transformation may fail.
     pub fn maybe_map_id<O: ObjectID, F: Fn(I) -> Option<O>>(self, f: F) -> Option<WorldOutcome<O>> {
         match self {
             WorldOutcome::ClickedFreeSpace(pt) => Some(WorldOutcome::ClickedFreeSpace(pt)),
@@ -76,6 +79,19 @@ impl<I: ObjectID> WorldOutcome<I> {
             }),
             WorldOutcome::Keypress(action, id) => Some(WorldOutcome::Keypress(action, f(id)?)),
             WorldOutcome::ClickedObject(id) => Some(WorldOutcome::ClickedObject(f(id)?)),
+            WorldOutcome::HoverChanged(before, after) => {
+                // If f returns None, bail out. But preserve None if before or after originally was
+                // that.
+                let before = match before {
+                    Some(x) => Some(f(x)?),
+                    None => None,
+                };
+                let after = match after {
+                    Some(x) => Some(f(x)?),
+                    None => None,
+                };
+                Some(WorldOutcome::HoverChanged(before, after))
+            }
             WorldOutcome::Nothing => Some(WorldOutcome::Nothing),
         }
     }
@@ -130,7 +146,16 @@ impl<'a, ID: ObjectID> ObjectBuilder<'a, ID> {
         self.draw(GeomBatch::from(vec![(color, hitbox)]))
     }
 
-    /// Indicate that an object doesn't need to be drawn individually. A call to `draw_master_batch` covers it.
+    /// Draw the object by coloring its hitbox, only when unzoomed. Show nothing when zoomed.
+    pub fn draw_color_unzoomed(self, color: Color) -> Self {
+        let hitbox = self.hitbox.clone().expect("call hitbox first");
+        let mut draw = ToggleZoomed::builder();
+        draw.unzoomed.push(color, hitbox);
+        self.draw(draw)
+    }
+
+    /// Indicate that an object doesn't need to be drawn individually. A call to
+    /// `draw_master_batch` covers it.
     pub fn drawn_in_master_batch(self) -> Self {
         assert!(
             self.draw_normal.is_none(),
@@ -220,6 +245,12 @@ impl<'a, ID: ObjectID> ObjectBuilder<'a, ID> {
         self
     }
 
+    /// Mark the object as clickable or not. `WorldOutcome::ClickedObject` will be fired.
+    pub fn set_clickable(mut self, clickable: bool) -> Self {
+        self.clickable = clickable;
+        self
+    }
+
     /// Mark the object as draggable. The user can hover on this object, then click and drag it.
     /// `WorldOutcome::Dragging` events will be fired.
     ///
@@ -240,7 +271,7 @@ impl<'a, ID: ObjectID> ObjectBuilder<'a, ID> {
     }
 
     /// Finalize the object, adding it to the `World`.
-    pub fn build(mut self, ctx: &mut EventCtx) {
+    pub fn build(mut self, ctx: &EventCtx) {
         let hitbox = self.hitbox.take().expect("didn't specify hitbox");
         let bounds = hitbox.get_bounds();
         let quadtree_id = self
@@ -360,13 +391,41 @@ impl<ID: ObjectID> World<ID> {
         }
     }
 
+    /// Like delete, but doesn't crash if the object doesn't exist
+    pub fn maybe_delete(&mut self, id: ID) {
+        if self.hovering == Some(id) {
+            self.hovering = None;
+            if self.dragging_from.is_some() {
+                panic!("Can't delete {:?} mid-drag", id);
+            }
+        }
+
+        if let Some(obj) = self.objects.remove(&id) {
+            if self.quadtree.remove(obj.quadtree_id).is_none() {
+                // This can happen for objects that're out-of-bounds. One example is intersections
+                // in map_editor.
+                warn!("{:?} wasn't in the quadtree", id);
+            }
+        }
+    }
+
     /// After adding all objects to a `World`, call this to initially detect if the cursor is
-    /// hovering on an object.
+    /// hovering on an object. This may also be called after adding or deleting objects to
+    /// immediately recalculate hover before the mouse moves.
+    // TODO Maybe we should automatically do this after mutations? Except we don't want to in the
+    // middle of a bulk operation, like initial setup or a many-step mutation. So maybe the caller
+    // really should handle it.
     pub fn initialize_hover(&mut self, ctx: &EventCtx) {
         self.hovering = ctx
             .canvas
             .get_cursor_in_map_space()
             .and_then(|cursor| self.calculate_hover(cursor));
+    }
+
+    /// Forcibly reset the hovering state to empty. This is a necessary hack when launching a new
+    /// state that uses `DrawBaselayer::PreviousState` and has tooltips.
+    pub fn hack_unset_hovering(&mut self) {
+        self.hovering = None;
     }
 
     /// If a drag event causes the world to be totally rebuilt, call this with the previous world
@@ -390,6 +449,11 @@ impl<ID: ObjectID> World<ID> {
         self.draw_master_batches.push(draw.into().build(ctx));
     }
 
+    /// Like `draw_master_batch`, but for already-built objects.
+    pub fn draw_master_batch_built(&mut self, draw: ToggleZoomed) {
+        self.draw_master_batches.push(draw);
+    }
+
     /// Let objects in the world respond to something happening.
     pub fn event(&mut self, ctx: &mut EventCtx) -> WorldOutcome<ID> {
         if let Some((drag_from, moved)) = self.dragging_from {
@@ -401,11 +465,16 @@ impl<ID: ObjectID> World<ID> {
                     return WorldOutcome::ClickedObject(self.hovering.unwrap());
                 }
 
+                let before = self.hovering;
                 self.hovering = ctx
                     .canvas
                     .get_cursor_in_map_space()
                     .and_then(|cursor| self.calculate_hover(cursor));
-                return WorldOutcome::Nothing;
+                return if before == self.hovering {
+                    WorldOutcome::Nothing
+                } else {
+                    WorldOutcome::HoverChanged(before, self.hovering)
+                };
             }
             // Allow zooming, but not panning, while dragging
             if let Some((_, dy)) = ctx.input.get_mouse_scroll() {
@@ -432,13 +501,22 @@ impl<ID: ObjectID> World<ID> {
         let cursor = if let Some(pt) = ctx.canvas.get_cursor_in_map_space() {
             pt
         } else {
-            self.hovering = None;
-            return WorldOutcome::Nothing;
+            let before = self.hovering.take();
+            return if before.is_some() {
+                WorldOutcome::HoverChanged(before, None)
+            } else {
+                WorldOutcome::Nothing
+            };
         };
 
         // Possibly recalculate hovering
+        let mut neutral_outcome = WorldOutcome::Nothing;
         if ctx.redo_mouseover() {
+            let before = self.hovering;
             self.hovering = self.calculate_hover(cursor);
+            if before != self.hovering {
+                neutral_outcome = WorldOutcome::HoverChanged(before, self.hovering);
+            }
         }
 
         // If we're hovering on a draggable thing, only allow zooming, not panning
@@ -456,7 +534,7 @@ impl<ID: ObjectID> World<ID> {
                 allow_panning = false;
                 if ctx.input.left_mouse_button_pressed() {
                     self.dragging_from = Some((cursor, false));
-                    return WorldOutcome::Nothing;
+                    return neutral_outcome;
                 }
             }
 
@@ -477,7 +555,7 @@ impl<ID: ObjectID> World<ID> {
             ctx.canvas.zoom(dy, ctx.canvas.get_cursor());
         }
 
-        WorldOutcome::Nothing
+        neutral_outcome
     }
 
     fn calculate_hover(&self, cursor: Pt2D) -> Option<ID> {
@@ -547,6 +625,23 @@ impl<ID: ObjectID> World<ID> {
         } else {
             false
         }
+    }
+
+    /// Calculate the object currently underneath the cursor. This should only be used when the
+    /// `World` is not being actively updated by calling `event`. If another state temporarily
+    /// needs to disable most interactions with objects, it can poll this instead.
+    pub fn calculate_hovering(&self, ctx: &EventCtx) -> Option<ID> {
+        // TODO Seems expensive! Maybe instead set some kind of "locked" mode and disable
+        // everything except hovering?
+        ctx.canvas
+            .get_cursor_in_map_space()
+            .and_then(|cursor| self.calculate_hover(cursor))
+    }
+
+    /// If an object is currently being hovered on, return its keybindings. This should be used to
+    /// describe interactions; to detect the keypresses, listen for `WorldOutcome::Keypress`.
+    pub fn get_hovered_keybindings(&self) -> Option<&Vec<(MultiKey, &'static str)>> {
+        Some(&self.objects[&self.hovering?].keybindings)
     }
 }
 

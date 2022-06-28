@@ -1,8 +1,7 @@
 use abstutil::Timer;
 use geom::{Distance, FindClosest, PolyLine};
 use kml::ExtraShapes;
-use map_model::osm;
-use map_model::raw::{OriginalRoad, RawMap};
+use raw_map::{osm, OriginalRoad, RawMap};
 
 use crate::{OnstreetParking, Options, PrivateOffstreetParking, PublicOffstreetParking};
 
@@ -26,12 +25,14 @@ pub fn apply_parking(map: &mut RawMap, opts: &Options, timer: &mut Timer) {
                     && id.osm_way_id.0 % 100 <= pct
                     && r.length() >= Distance::meters(20.0)
                 {
-                    if r.osm_tags.is("oneway", "yes") {
+                    if r.oneway_for_driving().is_some() {
                         r.osm_tags.remove(osm::PARKING_BOTH);
                         r.osm_tags.insert(osm::PARKING_RIGHT, "parallel");
                     } else {
                         r.osm_tags.insert(osm::PARKING_BOTH, "parallel");
                     }
+
+                    r.lane_specs_ltr = raw_map::get_lane_specs_ltr(&r.osm_tags, &opts.map_config);
                 }
             }
         }
@@ -56,7 +57,7 @@ fn use_parking_hints(map: &mut RawMap, path: String, timer: &mut Timer) {
         if r.is_light_rail() || r.is_footway() || r.is_service() {
             continue;
         }
-        let center = PolyLine::must_new(r.center_points.clone());
+        let center = PolyLine::must_new(r.osm_center_points.clone());
         closest.add(
             (*id, true),
             center.must_shift_right(DIRECTED_ROAD_THICKNESS).points(),
@@ -139,6 +140,9 @@ fn use_parking_hints(map: &mut RawMap, path: String, timer: &mut Timer) {
                 tags.remove(osm::PARKING_RIGHT).unwrap();
                 tags.insert(osm::PARKING_BOTH, value);
             }
+
+            let lane_specs_ltr = raw_map::get_lane_specs_ltr(tags, &map.config);
+            map.roads.get_mut(&r).unwrap().lane_specs_ltr = lane_specs_ltr;
         }
     }
     timer.stop("apply parking hints");

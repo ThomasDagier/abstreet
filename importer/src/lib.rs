@@ -13,12 +13,12 @@ use structopt::StructOpt;
 
 use abstio::{CityName, MapName};
 use abstutil::Timer;
-use geom::Distance;
 use map_model::RawToMapOptions;
 
 use self::configuration::{load_configuration, ImporterConfiguration};
 pub use self::pick_geofabrik::pick_geofabrik;
 
+mod basemap;
 mod berlin;
 mod configuration;
 mod map_config;
@@ -49,7 +49,7 @@ pub async fn regenerate_everything(shard_num: usize, num_shards: usize) {
 pub async fn oneshot(
     osm_path: String,
     clip: Option<String>,
-    drive_on_right: bool,
+    driving_side: map_model::DrivingSide,
     filter_crosswalks: bool,
     create_uk_travel_demand_model: bool,
     opts: RawToMapOptions,
@@ -57,32 +57,13 @@ pub async fn oneshot(
     let mut timer = abstutil::Timer::new("oneshot");
     println!("- Running convert_osm on {}", osm_path);
     let name = abstutil::basename(&osm_path);
+    let mut options = convert_osm::Options::default_for_side(driving_side);
+    options.filter_crosswalks = filter_crosswalks;
     let raw = convert_osm::convert(
         osm_path,
         MapName::new("zz", "oneshot", &name),
         clip,
-        convert_osm::Options {
-            map_config: map_model::MapConfig {
-                driving_side: if drive_on_right {
-                    map_model::DrivingSide::Right
-                } else {
-                    map_model::DrivingSide::Left
-                },
-                bikes_can_use_bus_lanes: true,
-                inferred_sidewalks: true,
-                street_parking_spot_length: Distance::meters(8.0),
-                turn_on_red: true,
-            },
-
-            onstreet_parking: convert_osm::OnstreetParking::JustOSM,
-            public_offstreet_parking: convert_osm::PublicOffstreetParking::None,
-            private_offstreet_parking: convert_osm::PrivateOffstreetParking::FixedPerBldg(1),
-            include_railroads: true,
-            extra_buildings: None,
-            skip_local_roads: false,
-            filter_crosswalks,
-            gtfs_url: None,
-        },
+        options,
         &mut timer,
     );
     // Often helpful to save intermediate representation in case user wants to load into map_editor
@@ -265,6 +246,19 @@ impl Job {
                         "distribute residents from planning areas for {}",
                         name.describe()
                     ));
+
+                    map.save();
+                }
+
+                if name == MapName::new("br", "sao_paulo", "sao_miguel_paulista") {
+                    basemap::override_sidewalk_widths(
+                        &mut map,
+                        abstio::path("system/proposals/smp_sidewalk_basemap.json"),
+                        timer,
+                    )
+                    .unwrap();
+
+                    map.save();
                 }
 
                 Some(map)
@@ -320,9 +314,16 @@ impl Job {
                 }
 
                 if self.city.country == "gb" {
-                    uk::generate_scenario(maybe_map.as_ref().unwrap(), &config, timer)
-                        .await
-                        .unwrap();
+                    if name == MapName::new("gb", "london", "central") {
+                        // No scenario for Central London, which has buildings stripped out
+                        let map = maybe_map.as_mut().unwrap();
+                        map.minify_buildings(timer);
+                        map.save();
+                    } else {
+                        uk::generate_scenario(maybe_map.as_ref().unwrap(), &config, timer)
+                            .await
+                            .unwrap();
+                    }
                 }
             }
             timer.stop(name.describe());

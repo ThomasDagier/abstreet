@@ -2,8 +2,8 @@ use std::cell::RefCell;
 
 use geom::{Angle, ArrowCap, Distance, Line, PolyLine, Polygon, Pt2D, Ring, Time, EPSILON_DIST};
 use map_model::{
-    Direction, DrivingSide, Intersection, IntersectionID, IntersectionType, LaneType, Map, Road,
-    RoadWithStopSign, Turn, TurnType, SIDEWALK_THICKNESS,
+    ControlTrafficSignal, Direction, DrivingSide, Intersection, IntersectionID, IntersectionType,
+    LaneType, Map, Road, RoadWithStopSign, Turn, TurnType, SIDEWALK_THICKNESS,
 };
 use widgetry::{Color, Drawable, GeomBatch, GfxCtx, Prerender, RewriteColor, Text};
 
@@ -55,25 +55,33 @@ impl DrawIntersection {
         }
 
         for turn in &i.turns {
+            if !app.opts().show_crosswalks {
+                break;
+            }
             if turn.turn_type.pedestrian_crossing() {
                 make_crosswalk(&mut default_geom, turn, map, app.cs());
             }
         }
 
         if i.is_private(map) {
-            default_geom.push(app.cs().private_road.alpha(0.5), i.polygon.clone());
+            if let Some(color) = app.cs().private_road {
+                default_geom.push(color.alpha(0.5), i.polygon.clone());
+            }
         }
 
         match i.intersection_type {
             IntersectionType::Border => {
                 let r = map.get_r(*i.roads.iter().next().unwrap());
                 default_geom.extend(
-                    app.cs().road_center_line,
+                    app.cs().road_center_line(map),
                     calculate_border_arrows(i, r, map),
                 );
             }
             IntersectionType::StopSign => {
                 for ss in map.get_stop_sign(i.id).roads.values() {
+                    if !app.opts().show_stop_signs {
+                        break;
+                    }
                     if ss.must_stop {
                         if let Some((octagon, pole, angle)) =
                             DrawIntersection::stop_sign_geom(ss, map)
@@ -155,11 +163,10 @@ impl DrawIntersection {
     /// Find sections along the intersection polygon that aren't connected to a road. These should
     /// contribute an outline.
     pub fn get_unzoomed_outline(i: &Intersection, map: &Map) -> Vec<PolyLine> {
-        let mut segments = Vec::new();
         if let Some(ring) = i.polygon.get_outer_ring() {
             // Turn each road into the left and right point that should be on the ring, so we can
             // "subtract" them out.
-            let road_pairs: Vec<(Pt2D, Pt2D)> = i
+            let road_pairs = i
                 .roads
                 .iter()
                 .map(|r| {
@@ -173,19 +180,81 @@ impl DrawIntersection {
                         (left.last_pt(), right.last_pt())
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
 
             // Walk along each line segment on the ring. If it's not one of our road pairs, add it
             // as a potential segment.
-            for pair1 in ring.into_points().windows(2) {
-                if !road_pairs.iter().any(|pair2| approx_eq(pair1, pair2)) {
-                    segments.push(PolyLine::must_new(vec![pair1[0], pair1[1]]));
-                }
-            }
+            ring.into_points()
+                .windows(2)
+                .filter(|window| {
+                    !road_pairs
+                        .iter()
+                        .any(|road_pair| approx_eq(window, &road_pair))
+                })
+                .map(|pair| PolyLine::must_new(vec![pair[0], pair[1]]))
+                .collect::<Vec<_>>()
 
             // TODO We could merge adjacent segments, to get nicer corners
+        } else {
+            vec![]
         }
-        segments
+    }
+
+    fn redraw_default(&self, g: &mut GfxCtx, app: &dyn AppLike) {
+        // Lazily calculate, because these are expensive to all do up-front, and most players won't
+        // exhaustively see every intersection during a single session
+        let mut draw = self.draw_default.borrow_mut();
+        if draw.is_none() {
+            *draw = Some(g.upload(self.render(g, app)));
+        }
+        g.redraw(draw.as_ref().unwrap());
+    }
+
+    fn draw_traffic_signal(
+        &self,
+        g: &mut GfxCtx,
+        app: &dyn AppLike,
+        opts: &DrawOptions,
+        signal: &ControlTrafficSignal,
+    ) {
+        if opts.suppress_traffic_signal_details.contains(&self.id) {
+            return;
+        }
+
+        let mut maybe_redraw = self.draw_traffic_signal.borrow_mut();
+        if app.opts().show_traffic_signal_icon {
+            // The icon doesn't change over time
+            let recalc = maybe_redraw.is_none();
+            if recalc {
+                let batch = GeomBatch::load_svg(g, "system/assets/map/traffic_signal.svg")
+                    .scale(0.3)
+                    .centered_on(app.map().get_i(self.id).polygon.polylabel());
+                *maybe_redraw = Some((Time::START_OF_DAY, g.prerender.upload(batch)));
+            }
+        } else {
+            let recalc = maybe_redraw
+                .as_ref()
+                .map(|(t, _)| *t != app.sim_time())
+                .unwrap_or(true);
+            if recalc {
+                let (idx, remaining) = app.current_stage_and_remaining_time(self.id);
+                let mut batch = GeomBatch::new();
+                traffic_signal::draw_signal_stage(
+                    g.prerender,
+                    &signal.stages[idx],
+                    idx,
+                    self.id,
+                    Some(remaining),
+                    &mut batch,
+                    app,
+                    app.opts().traffic_signal_style.clone(),
+                );
+                *maybe_redraw = Some((app.sim_time(), g.prerender.upload(batch)));
+            }
+        }
+
+        let (_, batch) = maybe_redraw.as_ref().unwrap();
+        g.redraw(batch);
     }
 }
 
@@ -201,39 +270,9 @@ impl Renderable for DrawIntersection {
     }
 
     fn draw(&self, g: &mut GfxCtx, app: &dyn AppLike, opts: &DrawOptions) {
-        // Lazily calculate, because these are expensive to all do up-front, and most players won't
-        // exhaustively see every intersection during a single session
-        let mut draw = self.draw_default.borrow_mut();
-        if draw.is_none() {
-            *draw = Some(g.upload(self.render(g, app)));
-        }
-        g.redraw(draw.as_ref().unwrap());
-
+        self.redraw_default(g, app);
         if let Some(signal) = app.map().maybe_get_traffic_signal(self.id) {
-            if !opts.suppress_traffic_signal_details.contains(&self.id) {
-                let mut maybe_redraw = self.draw_traffic_signal.borrow_mut();
-                let recalc = maybe_redraw
-                    .as_ref()
-                    .map(|(t, _)| *t != app.sim_time())
-                    .unwrap_or(true);
-                if recalc {
-                    let (idx, remaining) = app.current_stage_and_remaining_time(self.id);
-                    let mut batch = GeomBatch::new();
-                    traffic_signal::draw_signal_stage(
-                        g.prerender,
-                        &signal.stages[idx],
-                        idx,
-                        self.id,
-                        Some(remaining),
-                        &mut batch,
-                        app,
-                        app.opts().traffic_signal_style.clone(),
-                    );
-                    *maybe_redraw = Some((app.sim_time(), g.prerender.upload(batch)));
-                }
-                let (_, batch) = maybe_redraw.as_ref().unwrap();
-                g.redraw(batch);
-            }
+            self.draw_traffic_signal(g, app, opts, signal);
         }
     }
 
@@ -359,7 +398,11 @@ fn calculate_corner_curbs(i: &Intersection, map: &Map) -> Vec<Polygon> {
             } else {
                 -1.0
                 // At a dead end we're going the long way around
-            } * if i.is_deadend() { -1.0 } else { 1.0 };
+            } * if i.is_deadend_for_everyone() {
+                -1.0
+            } else {
+                1.0
+            };
             let l1 = map.get_l(turn.id.src);
             let l2 = map.get_l(turn.id.dst);
 
@@ -500,7 +543,7 @@ pub fn make_crosswalk(batch: &mut GeomBatch, turn: &Turn, map: &Map, cs: &ColorS
     // crosswalk line itself. Center the lines inside these two boundaries.
     let boundary = width;
     let tile_every = width * 0.6;
-    let line = if let Some(l) = crosswalk_line(turn) {
+    let line = if let Some(l) = turn.crosswalk_line() {
         l
     } else {
         return;
@@ -594,7 +637,7 @@ fn make_unmarked_crossing(batch: &mut GeomBatch, turn: &Turn, map: &Map, cs: &Co
     let color = cs.general_road_marking.alpha(0.5);
     let band_width = Distance::meters(0.1);
     let total_width = map.get_l(turn.id.src).width;
-    if let Some(line) = crosswalk_line(turn) {
+    if let Some(line) = turn.crosswalk_line() {
         if let Ok(slice) = line.slice(total_width, line.length() - total_width) {
             batch.push(
                 color,
@@ -610,20 +653,6 @@ fn make_unmarked_crossing(batch: &mut GeomBatch, turn: &Turn, map: &Map, cs: &Co
             );
         }
     }
-}
-
-// The geometry of crosswalks will first cross part of a sidewalk corner, then actually enter the
-// road. Extract the piece that's in the road.
-fn crosswalk_line(turn: &Turn) -> Option<Line> {
-    let pts = turn.geom.points();
-    if pts.len() < 3 {
-        warn!(
-            "Not rendering crosswalk for {}; its geometry was squished earlier",
-            turn.id
-        );
-        return None;
-    }
-    Line::new(pts[1], pts[2]).ok()
 }
 
 // TODO copied from DrawLane

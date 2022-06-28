@@ -1,0 +1,26 @@
+[package]
+name = "map_editor"
+version = "0.1.0"
+authors = ["Dustin Carlino <dabreegster@gmail.com>"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+default = ["widgetry/native-backend"]
+wasm = ["getrandom/js", "wasm-bindgen", "widgetry/wasm-backend"]
+
+[dependencies]
+aabb-quadtree = "0.1.0"
+abstio = { path = "../../abstio" }
+abstutil = { path = "../../abstutil" }
+fs-err = "2.6.0"
+geom = { path = "../../geom" }
+getrandom = { version = "0.2.3", optional = true }
+log = "0.4.14"
+raw_map = { path = "../../raw_map" }
+serde = "1.0.123"
+structopt = "0.3.23"
+wasm-bindgen = { version = "0.2.70", optional = true }
+widgetry = { path = "../../widgetry" }

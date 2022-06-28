@@ -95,6 +95,14 @@ pub fn write_binary<T: Serialize>(path: String, obj: &T) {
     info!("Wrote {}", path);
 }
 
+pub fn write_raw(path: String, bytes: &[u8]) -> Result<()> {
+    fs_err::create_dir_all(std::path::Path::new(&path).parent().unwrap())?;
+
+    let mut file = BufWriter::new(File::create(path)?);
+    file.write_all(bytes)?;
+    Ok(())
+}
+
 /// Idempotent
 pub fn delete_file<I: AsRef<str>>(path: I) {
     let path = path.as_ref();
@@ -189,4 +197,11 @@ impl Read for FileWithProgress {
 
         Ok(bytes)
     }
+}
+
+/// Returns path on success
+pub fn write_file(path: String, contents: String) -> Result<String> {
+    let mut file = File::create(&path)?;
+    write!(file, "{}", contents)?;
+    Ok(path)
 }

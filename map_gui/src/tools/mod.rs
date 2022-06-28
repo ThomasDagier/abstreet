@@ -10,19 +10,20 @@ use widgetry::{lctrl, EventCtx, GfxCtx, Key, Line, Text, Widget};
 pub use self::camera::{CameraState, DefaultMap};
 pub use self::city_picker::CityPicker;
 pub use self::colors::{ColorDiscrete, ColorLegend, ColorNetwork, ColorScale, DivergingScale};
+pub use self::draw_overlapping_paths::draw_overlapping_paths;
 pub use self::heatmap::{draw_isochrone, make_heatmap, Grid, HeatmapOptions};
 pub use self::icons::{goal_marker, start_marker};
 pub use self::labels::DrawRoadLabels;
 pub use self::minimap::{Minimap, MinimapControls};
 pub use self::navigate::Navigator;
+pub use self::polygon::EditPolygon;
 pub use self::title_screen::{Executable, TitleScreen};
 pub use self::trip_files::{TripManagement, TripManagementState};
 pub use self::turn_explorer::TurnExplorer;
 pub use self::ui::{
     checkbox_per_mode, cmp_count, cmp_dist, cmp_duration, color_for_mode, percentage_bar,
-    ChooseSomething, FilePicker, PopupMsg, PromptInput,
+    ChooseSomething, FilePicker, PromptInput,
 };
-pub use self::url::URLManager;
 pub use self::waypoints::{InputWaypoints, WaypointID};
 use crate::AppLike;
 
@@ -37,6 +38,7 @@ mod colors;
 #[cfg(not(target_arch = "wasm32"))]
 mod command;
 pub mod compare_counts;
+mod draw_overlapping_paths;
 mod heatmap;
 mod icons;
 #[cfg(not(target_arch = "wasm32"))]
@@ -44,17 +46,17 @@ mod importer;
 mod labels;
 mod minimap;
 mod navigate;
+mod polygon;
 mod title_screen;
 mod trip_files;
 mod turn_explorer;
 mod ui;
 #[cfg(not(target_arch = "wasm32"))]
 mod updater;
-mod url;
 mod waypoints;
 
 // Update this ___before___ pushing the commit with "[rebuild] [release]".
-const NEXT_RELEASE: &str = "0.3.12";
+const NEXT_RELEASE: &str = "0.3.25";
 
 /// Returns the version of A/B Street to link to. When building for a release, this points to that
 /// new release. Otherwise it points to the current dev version.
@@ -107,6 +109,7 @@ pub fn nice_map_name(name: &MapName) -> &str {
         "br" => match (name.city.city.as_ref(), name.map.as_ref()) {
             ("sao_paulo", "aricanduva") => "São Paulo (Avenue Aricanduva)",
             ("sao_paulo", "center") => "São Paulo (city center)",
+            ("sao_paulo", "sao_miguel_paulista") => "São Miguel Paulista",
             _ => &name.map,
         },
         "ca" => match (name.city.city.as_ref(), name.map.as_ref()) {
@@ -167,15 +170,18 @@ pub fn nice_map_name(name: &MapName) -> &str {
             ("clackers_brook", "center") => "Clackers Brook",
             ("cricklewood", "center") => "Cricklewood",
             ("culm", "center") => "Culm",
+            ("derby", "center") => "Derby",
             ("dickens_heath", "center") => "Dickens Heath",
             ("didcot", "center") => "Didcot (Harwell)",
             ("dunton_hills", "center") => "Dunton Hills",
             ("ebbsfleet", "center") => "Ebbsfleet (Dartford)",
             ("exeter_red_cow_village", "center") => "Exeter Red Cow Village",
+            ("glenrothes", "center") => "Glenrothes (Scotland)",
             ("great_kneighton", "center") => "Great Kneighton (Cambridge)",
             ("halsnhead", "center") => "Halsnead",
             ("hampton", "center") => "Hampton",
             ("kergilliack", "center") => "Kergilliack",
+            ("keighley", "center") => "Keighley",
             ("kidbrooke_village", "center") => "Kidbrooke Village",
             ("lcid", "center") => "Leeds Climate Innovation District",
             ("leeds", "central") => "Leeds (city center)",
@@ -184,6 +190,7 @@ pub fn nice_map_name(name: &MapName) -> &str {
             ("leeds", "west") => "West Leeds",
             ("lockleaze", "center") => "Lockleaze",
             ("london", "camden") => "Camden",
+            ("london", "central") => "Central London",
             ("london", "hackney") => "Hackney",
             ("london", "kennington") => "Kennington (London)",
             ("london", "kingston_upon_thames") => "Kingston upon Thames",
@@ -195,7 +202,10 @@ pub fn nice_map_name(name: &MapName) -> &str {
             ("newborough_road", "center") => "Newborough Road",
             ("newcastle_great_park", "center") => "Newcastle Great Park",
             ("newcastle_upon_tyne", "center") => "Newcastle upon Tyne",
+            ("nottingham", "center") => "Nottingham (city center)",
+            ("nottingham", "huge") => "Nottingham (entire area)",
             ("northwick_park", "center") => "Northwick Park",
+            ("oxford", "center") => "Oxford",
             ("poundbury", "center") => "Poundbury",
             ("priors_hall", "center") => "Priors Hall",
             ("st_albans", "center") => "St Albans",
@@ -214,6 +224,10 @@ pub fn nice_map_name(name: &MapName) -> &str {
         },
         "il" => match (name.city.city.as_ref(), name.map.as_ref()) {
             ("tel_aviv", "center") => "Tel Aviv (city center)",
+            _ => &name.map,
+        },
+        "in" => match (name.city.city.as_ref(), name.map.as_ref()) {
+            ("pune", "center") => "Pune",
             _ => &name.map,
         },
         "ir" => match (name.city.city.as_ref(), name.map.as_ref()) {
@@ -249,6 +263,7 @@ pub fn nice_map_name(name: &MapName) -> &str {
             _ => &name.map,
         },
         "tw" => match (name.city.city.as_ref(), name.map.as_ref()) {
+            ("keelung", "center") => "Keelung",
             ("taipei", "center") => "Taipei (city center)",
             _ => &name.map,
         },
@@ -305,6 +320,7 @@ pub fn nice_country_name(code: &str) -> &str {
         "fr" => "France",
         "gb" => "Great Britain",
         "il" => "Israel",
+        "in" => "India",
         "ir" => "Iran",
         "jp" => "Japan",
         "ly" => "Libya",
@@ -316,10 +332,6 @@ pub fn nice_country_name(code: &str) -> &str {
         "us" => "United States of America",
         _ => code,
     }
-}
-
-pub fn open_browser<I: AsRef<str>>(url: I) {
-    let _ = webbrowser::open(url.as_ref());
 }
 
 /// Returns the path to an executable. Native-only.
@@ -404,4 +416,16 @@ pub fn intersections_from_roads(roads: &BTreeSet<RoadID>, map: &Map) -> BTreeSet
         }
     }
     results
+}
+
+/// Modify the current URL to set the first free parameter to the current map name.
+pub fn update_url_map_name(app: &dyn AppLike) {
+    widgetry::tools::URLManager::update_url_free_param(
+        app.map()
+            .get_name()
+            .path()
+            .strip_prefix(&abstio::path(""))
+            .unwrap()
+            .to_string(),
+    );
 }

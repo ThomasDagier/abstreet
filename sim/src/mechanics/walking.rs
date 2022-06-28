@@ -5,16 +5,17 @@ use serde::{Deserialize, Serialize};
 use abstutil::{deserialize_multimap, serialize_multimap, FixedMap, IndexableKey, MultiMap};
 use geom::{Distance, Duration, Line, PolyLine, Speed, Time};
 use map_model::{
-    BuildingID, DrivingSide, Map, ParkingLotID, Path, PathConstraints, PathStep, TransitRouteID,
-    Traversable, SIDEWALK_THICKNESS,
+    BuildingID, DrivingSide, IntersectionID, Map, ParkingLotID, Path, PathConstraints, PathStep,
+    RoadID, TransitRouteID, Traversable,
 };
 
 use crate::sim::Ctx;
 use crate::{
-    AgentID, AgentProperties, Command, CommutersVehiclesCounts, CreatePedestrian, DistanceInterval,
-    DrawPedCrowdInput, DrawPedestrianInput, Event, Intent, IntersectionSimState, ParkedCar,
-    ParkingSpot, PedCrowdLocation, PedestrianID, PersonID, Scheduler, SidewalkPOI, SidewalkSpot,
-    TimeInterval, TransitSimState, TripID, TripManager, UnzoomedAgent,
+    pedestrian_body_radius, AgentID, AgentProperties, Command, CommutersVehiclesCounts,
+    CreatePedestrian, DistanceInterval, DrawPedCrowdInput, DrawPedestrianInput, Event, Intent,
+    IntersectionSimState, ParkedCar, ParkingSpot, PedCrowdLocation, PedestrianID, PersonID,
+    Problem, Scheduler, SidewalkPOI, SidewalkSpot, TimeInterval, TransitSimState, TripID,
+    TripManager, UnzoomedAgent,
 };
 
 const TIME_TO_START_BIKING: Duration = Duration::const_seconds(30.0);
@@ -93,7 +94,13 @@ impl WalkingSimState {
                 Line::must_new(driving_pos.pt(map), params.start.sidewalk_pos.pt(map)),
                 TimeInterval::new(now, now + TIME_TO_FINISH_BIKING),
             ),
-            _ => ped.crossing_state(params.start.sidewalk_pos.dist_along(), now, map),
+            _ => ped.crossing_state(
+                &self.peds_per_traversable,
+                params.start.sidewalk_pos.dist_along(),
+                now,
+                map,
+                &mut self.events,
+            ),
         };
 
         scheduler.push(ped.state.get_end_time(), Command::UpdatePed(ped.id));
@@ -264,8 +271,13 @@ impl WalkingSimState {
                 }
             }
             PedState::LeavingBuilding(b, _) => {
-                ped.state =
-                    ped.crossing_state(ctx.map.get_b(b).sidewalk_pos.dist_along(), now, ctx.map);
+                ped.state = ped.crossing_state(
+                    &self.peds_per_traversable,
+                    ctx.map.get_b(b).sidewalk_pos.dist_along(),
+                    now,
+                    ctx.map,
+                    &mut self.events,
+                );
                 ctx.scheduler
                     .push(ped.state.get_end_time(), Command::UpdatePed(ped.id));
             }
@@ -283,8 +295,13 @@ impl WalkingSimState {
                 self.peds.remove(&id);
             }
             PedState::LeavingParkingLot(pl, _) => {
-                ped.state =
-                    ped.crossing_state(ctx.map.get_pl(pl).sidewalk_pos.dist_along(), now, ctx.map);
+                ped.state = ped.crossing_state(
+                    &self.peds_per_traversable,
+                    ctx.map.get_pl(pl).sidewalk_pos.dist_along(),
+                    now,
+                    ctx.map,
+                    &mut self.events,
+                );
                 ctx.scheduler
                     .push(ped.state.get_end_time(), Command::UpdatePed(ped.id));
             }
@@ -318,7 +335,13 @@ impl WalkingSimState {
                 self.peds.remove(&id);
             }
             PedState::FinishingBiking(ref spot, _, _) => {
-                ped.state = ped.crossing_state(spot.sidewalk_pos.dist_along(), now, ctx.map);
+                ped.state = ped.crossing_state(
+                    &self.peds_per_traversable,
+                    spot.sidewalk_pos.dist_along(),
+                    now,
+                    ctx.map,
+                    &mut self.events,
+                );
                 ctx.scheduler
                     .push(ped.state.get_end_time(), Command::UpdatePed(ped.id));
             }
@@ -406,8 +429,7 @@ impl WalkingSimState {
 
     pub fn trace_route(&self, now: Time, id: PedestrianID, map: &Map) -> Option<PolyLine> {
         let p = self.peds.get(&id)?;
-        let body_radius = SIDEWALK_THICKNESS / 4.0;
-        let dist = (p.get_dist_along(now, map) + body_radius).min(
+        let dist = (p.get_dist_along(now, map) + pedestrian_body_radius()).min(
             p.path
                 .current_step()
                 .as_traversable()
@@ -603,6 +625,35 @@ impl WalkingSimState {
             }
         }
     }
+
+    pub fn get_pedestrian_density(
+        &self,
+        map: &Map,
+    ) -> (BTreeMap<RoadID, f64>, BTreeMap<IntersectionID, f64>) {
+        let mut roads = BTreeMap::new();
+        let mut intersections = BTreeMap::new();
+        for (traversable, peds) in self.peds_per_traversable.borrow() {
+            if peds.is_empty() {
+                continue;
+            }
+            let density = (peds.len() as f64) / area(map, *traversable);
+            match traversable {
+                Traversable::Lane(l) => {
+                    let entry = roads.entry(l.road).or_insert(0.0);
+                    if *entry < density {
+                        *entry = density;
+                    }
+                }
+                Traversable::Turn(t) => {
+                    let entry = intersections.entry(t.parent).or_insert(0.0);
+                    if *entry < density {
+                        *entry = density;
+                    }
+                }
+            }
+        }
+        (roads, intersections)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -622,7 +673,14 @@ struct Pedestrian {
 }
 
 impl Pedestrian {
-    fn crossing_state(&self, start_dist: Distance, start_time: Time, map: &Map) -> PedState {
+    fn crossing_state(
+        &self,
+        peds_per_traversable: &MultiMap<Traversable, PedestrianID>,
+        start_dist: Distance,
+        start_time: Time,
+        map: &Map,
+        events: &mut Vec<Event>,
+    ) -> PedState {
         let end_dist = if self.path.is_last_step() {
             self.goal.sidewalk_pos.dist_along()
         } else {
@@ -634,13 +692,29 @@ impl Pedestrian {
                 PathStep::ContraflowTurn(_) => Distance::ZERO,
             }
         };
+
+        let speed_penalty = crowdedness_penalty(
+            map,
+            self.path.current_step().as_traversable(),
+            peds_per_traversable,
+        );
+        if speed_penalty != 1.0 {
+            events.push(Event::ProblemEncountered(
+                self.trip,
+                Problem::PedestrianOvercrowding(self.path.current_step().as_traversable()),
+            ));
+        }
+
         let dist_int = DistanceInterval::new_walking(start_dist, end_dist);
         let (speed, percent_incline) = self.path.current_step().max_speed_and_incline_along(
             Some(self.speed),
             PathConstraints::Pedestrian,
             map,
         );
-        let time_int = TimeInterval::new(start_time, start_time + dist_int.length() / speed);
+        let time_int = TimeInterval::new(
+            start_time,
+            start_time + dist_int.length() / (speed_penalty * speed),
+        );
         PedState::Crossing {
             dist_int,
             time_int,
@@ -676,7 +750,13 @@ impl Pedestrian {
         } else {
             270.0
         };
+        let project_away = match on {
+            Traversable::Lane(l) => map.get_l(l).width / 2.0 - pedestrian_body_radius(),
+            // Width of a crossing is fuzzy, but this could likely be improved
+            Traversable::Turn(_) => pedestrian_body_radius(),
+        };
         let mut intent = None;
+
         let (pos, facing) = match self.state {
             PedState::Crossing {
                 ref dist_int,
@@ -701,7 +781,7 @@ impl Pedestrian {
                     intent = Some(Intent::SteepUphill);
                 }
                 (
-                    pos.project_away(SIDEWALK_THICKNESS / 4.0, facing.rotate_degs(angle_offset)),
+                    pos.project_away(project_away, facing.rotate_degs(angle_offset)),
                     facing,
                 )
             }
@@ -713,7 +793,7 @@ impl Pedestrian {
                     orig_angle
                 };
                 (
-                    pos.project_away(SIDEWALK_THICKNESS / 4.0, facing.rotate_degs(angle_offset)),
+                    pos.project_away(project_away, facing.rotate_degs(angle_offset)),
                     facing,
                 )
             }
@@ -767,7 +847,7 @@ impl Pedestrian {
                 let (pt, angle) = self.goal.sidewalk_pos.pt_and_angle(map);
                 // Stand on the far side of the sidewalk (by the bus stop), facing the road
                 (
-                    pt.project_away(SIDEWALK_THICKNESS / 4.0, angle.rotate_degs(angle_offset)),
+                    pt.project_away(project_away, angle.rotate_degs(angle_offset)),
                     angle.rotate_degs(-angle_offset),
                 )
             }
@@ -828,7 +908,7 @@ impl Pedestrian {
             PathStep::Turn(_) => Distance::ZERO,
             PathStep::ContraflowTurn(t) => map.get_t(t).geom.length(),
         };
-        self.state = self.crossing_state(start_dist, now, map);
+        self.state = self.crossing_state(peds_per_traversable, start_dist, now, map, events);
         peds_per_traversable.insert(self.path.current_step().as_traversable(), self.id);
         events.push(Event::AgentEntersTraversable(
             AgentID::Pedestrian(self.id),
@@ -889,7 +969,7 @@ fn find_crowds(
 ) -> (Vec<PedestrianID>, Vec<DrawPedCrowdInput>) {
     let mut loners = Vec::new();
     let mut crowds = Vec::new();
-    let radius = SIDEWALK_THICKNESS / 4.0;
+    let radius = pedestrian_body_radius();
 
     let mut current_crowd = DrawPedCrowdInput {
         low: input[0].1 - radius,
@@ -931,4 +1011,42 @@ impl IndexableKey for PedestrianID {
     fn index(&self) -> usize {
         self.0
     }
+}
+
+/// Returns a number in (0, 1] to multiply speed by to account for current crowdedness.
+///
+/// We could get really fancy here and slow people down only when they're part of a crowd, or
+/// passing people going the opposite direction. But start simple -- keep a fixed speed for the
+/// entire time on a sidewalk, and base the decision on how many people are there when entering the
+/// sidewalk.
+fn crowdedness_penalty(
+    map: &Map,
+    traversable: Traversable,
+    peds_per_traversable: &MultiMap<Traversable, PedestrianID>,
+) -> f64 {
+    let num_people = peds_per_traversable.get(traversable).len();
+    // Assume everyone's equally spread out
+    let people_per_sq_m = (num_people as f64) / area(map, traversable);
+    // Based on eyeballing images from
+    // https://www.gkstill.com/Support/crowd-density/CrowdDensity-1.html, let's use a fixed
+    // threshold of 1.5 people per square meter as "crowded" and slow them down by half.
+    if people_per_sq_m < 1.5 {
+        // Plenty of room, no penalty
+        return 1.0;
+    }
+    0.5
+}
+
+// In m^2
+fn area(map: &Map, traversable: Traversable) -> f64 {
+    // The length of the sidewalk or crosswalk
+    let len = traversable.get_polyline(map).length();
+    // The width of the space
+    let width = match traversable {
+        // Sidewalk
+        Traversable::Lane(l) => map.get_l(l).width,
+        // For crosswalks, the thinner of the two sidewalks being connected
+        Traversable::Turn(t) => map.get_l(t.src).width.min(map.get_l(t.dst).width),
+    };
+    width.inner_meters() * len.inner_meters()
 }

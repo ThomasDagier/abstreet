@@ -3,24 +3,19 @@
 members = [
   "abstio",
   "abstutil",
+  "apps/*",
   "cli",
   "collisions",
   "convert_osm",
-  "fifteen_min",
-  "game",
   "geom",
   "headless",
   "importer",
-  "ltn",
   "kml",
-  "map_editor",
   "map_gui",
   "map_model",
-  "osm_viewer",
-  "parking_mapper",
   "piggyback",
   "popdat",
-  "santa",
+  "raw_map",
   "sim",
   "synthpop",
   "tests",
@@ -39,12 +34,5 @@ members = [
 opt-level = 3
 
 [patch.crates-io]
-# Waiting for release: https://github.com/21re/rust-geo-booleanop/pull/27
-geo-booleanop = { git = "https://github.com/21re/rust-geo-booleanop" }
-
-# Waiting for a new crates.io release, but git uses latest geo versions
-polylabel = { git = "https://github.com/urschrei/polylabel-rs" }
-
-# Waiting on release of PR: https://github.com/georust/geo/pull/654
-geo = { git = "https://github.com/georust/geo" }
-geo-types = { git = "https://github.com/georust/geo" }
+# avoid duplicating geo dependency, until next polylabel release
+polylabel = { git = "https://github.com/urschrei/polylabel-rs", rev = "b919b8587b491b9a952a6d4c0670558bfd38e034" }

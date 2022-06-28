@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use anyhow::Result;
 use petgraph::graphmap::{DiGraphMap, UnGraphMap};
-use serde::{Deserialize, Serialize};
 
 use abstio::{CityName, MapName};
 use abstutil::{prettyprint_usize, serialized_size_bytes, MultiMap, Tags, Timer};
 use geom::{Bounds, Distance, Duration, GPSBounds, Polygon, Pt2D, Ring, Time};
+use raw_map::{DrivingSide, MapConfig};
 
 use crate::raw::{OriginalRoad, RawMap};
 use crate::{
@@ -19,31 +19,6 @@ use crate::{
     Pathfinder, PathfinderCaching, Position, Road, RoadID, RoutingParams, TransitRoute,
     TransitRouteID, TransitStop, TransitStopID, Turn, TurnID, TurnType, Zone,
 };
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MapConfig {
-    /// If true, driving happens on the right side of the road (USA). If false, on the left
-    /// (Australia).
-    pub driving_side: DrivingSide,
-    pub bikes_can_use_bus_lanes: bool,
-    /// If true, roads without explicitly tagged sidewalks may have sidewalks or shoulders. If
-    /// false, no sidewalks will be inferred if not tagged in OSM, and separate sidewalks will be
-    /// included.
-    pub inferred_sidewalks: bool,
-    /// Street parking is divided into spots of this length. 8 meters is a reasonable default, but
-    /// people in some regions might be more accustomed to squeezing into smaller spaces. This
-    /// value can be smaller than the hardcoded maximum car length; cars may render on top of each
-    /// other, but otherwise the simulation doesn't care.
-    pub street_parking_spot_length: Distance,
-    /// If true, turns on red which do not conflict crossing traffic ('right on red') are allowed
-    pub turn_on_red: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
-pub enum DrivingSide {
-    Right,
-    Left,
-}
 
 impl Map {
     /// Load a map from a local serialized Map or RawMap. Note this won't work on web. This should
@@ -181,7 +156,7 @@ impl Map {
             pathfinder: Pathfinder::empty(),
             pathfinder_dirty: false,
             routing_params: RoutingParams::default(),
-            name: MapName::new("zz", "blank city", "blank"),
+            name: MapName::blank(),
             edits: MapEdits::new(),
             edits_generation: 0,
             road_to_buildings: MultiMap::new(),
@@ -282,8 +257,17 @@ impl Map {
     pub(crate) fn mut_lane(&mut self, id: LaneID) -> &mut Lane {
         &mut self.roads[id.road.0].lanes[id.offset]
     }
-    pub(crate) fn mut_road(&mut self, id: RoadID) -> &mut Road {
+    /// Public for importer. Do not abuse!
+    pub fn mut_road(&mut self, id: RoadID) -> &mut Road {
         &mut self.roads[id.0]
+    }
+    pub(crate) fn mut_turn(&mut self, id: TurnID) -> &mut Turn {
+        for turn in &mut self.intersections[id.parent.0].turns {
+            if turn.id == id {
+                return turn;
+            }
+        }
+        panic!("Couldn't find {id}");
     }
 
     pub fn get_i(&self, id: IntersectionID) -> &Intersection {
@@ -568,6 +552,10 @@ impl Map {
         &self.boundary_polygon
     }
 
+    pub fn get_pathfinder(&self) -> &Pathfinder {
+        &self.pathfinder
+    }
+
     pub fn pathfind(&self, req: PathRequest) -> Result<Path> {
         self.pathfind_v2(req)?.into_v1(self)
     }
@@ -604,11 +592,6 @@ impl Map {
     ) -> Option<(TransitStopID, Option<TransitStopID>, TransitRouteID)> {
         assert!(!self.pathfinder_dirty);
         self.pathfinder.should_use_transit(self, start, end)
-    }
-
-    /// Clear any pathfinders with custom RoutingParams, created previously with `cache_custom`
-    pub fn clear_custom_pathfinder_cache(&self) {
-        self.pathfinder.clear_custom_pathfinder_cache();
     }
 
     /// Return the cost of a single path, and also a mapping from every directed road to the cost
@@ -704,16 +687,6 @@ impl Map {
         });
     }
 
-    pub fn hack_override_routing_params(
-        &mut self,
-        routing_params: RoutingParams,
-        timer: &mut Timer,
-    ) {
-        self.routing_params = routing_params;
-        self.pathfinder_dirty = true;
-        self.recalculate_pathfinding_after_edits(timer);
-    }
-
     /// Normally after applying edits, you must call `recalculate_pathfinding_after_edits`.
     /// Alternatively, you can keep the old pathfinder exactly as it is. Use with caution -- the
     /// pathfinder and the map may be out-of-sync in arbitrary ways.
@@ -721,19 +694,19 @@ impl Map {
         self.pathfinder_dirty = false;
     }
 
-    pub fn get_languages(&self) -> BTreeSet<&str> {
+    pub fn get_languages(&self) -> BTreeSet<String> {
         let mut languages = BTreeSet::new();
         for r in self.all_roads() {
             for key in r.osm_tags.inner().keys() {
                 if let Some(x) = key.strip_prefix("name:") {
-                    languages.insert(x);
+                    languages.insert(x.to_string());
                 }
             }
         }
         for b in self.all_buildings() {
             for a in &b.amenities {
-                for lang in a.names.0.keys().flatten() {
-                    languages.insert(lang);
+                for lang in a.names.languages() {
+                    languages.insert(lang.to_string());
                 }
             }
         }
@@ -895,6 +868,27 @@ impl Map {
             self.routing_params().clone(),
             crate::pathfind::CreateEngine::CH,
             vec![PathConstraints::Car, PathConstraints::Bike],
+            timer,
+        );
+
+        // Remove all routes, since we remove that pathfinder
+        self.transit_stops.clear();
+        self.transit_routes.clear();
+        for r in &mut self.roads {
+            r.transit_stops.clear();
+        }
+    }
+
+    /// Modifies the map in-place, removing buildings.
+    pub fn minify_buildings(&mut self, timer: &mut Timer) {
+        self.buildings.clear();
+
+        // We only need the CHs for driving.
+        self.pathfinder = Pathfinder::new_limited(
+            self,
+            self.routing_params().clone(),
+            crate::pathfind::CreateEngine::CH,
+            vec![PathConstraints::Car],
             timer,
         );
 

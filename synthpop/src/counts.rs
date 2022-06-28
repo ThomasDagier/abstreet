@@ -3,9 +3,7 @@ use serde::{Deserialize, Serialize};
 use abstio::MapName;
 use abstutil::{prettyprint_usize, Counter, Timer};
 use geom::Distance;
-use map_model::{
-    IntersectionID, Map, PathRequest, PathStepV2, PathfinderCaching, RoadID, RoutingParams,
-};
+use map_model::{IntersectionID, Map, PathRequest, PathStepV2, PathV2, Pathfinder, RoadID};
 
 /// This represents the number of vehicles (or trips, or something else) crossing roads and
 /// intersections over some span of time. The data could represent real observations or something
@@ -42,8 +40,7 @@ impl TrafficCounts {
         map: &Map,
         description: String,
         requests: &[(PathRequest, usize)],
-        params: RoutingParams,
-        cache_custom: PathfinderCaching,
+        pathfinder: &Pathfinder,
         timer: &mut Timer,
     ) -> Self {
         let mut counts = Self {
@@ -72,35 +69,39 @@ impl TrafficCounts {
         timer.start_iter("calculate routes", requests.len());
         for (req, count) in requests {
             timer.next();
-            if let Ok(path) = map.pathfind_v2_with_params(req.clone(), &params, cache_custom) {
-                let count = *count;
-                for step in path.get_steps() {
-                    match step {
-                        PathStepV2::Along(dr) | PathStepV2::Contraflow(dr) => {
-                            counts.per_road.add(dr.road, count);
-                        }
-                        PathStepV2::Movement(m) | PathStepV2::ContraflowMovement(m) => {
-                            counts.per_intersection.add(m.parent, count);
-                        }
-                    }
-                }
-
-                // If we're starting or ending at a border, count it
-                if req.start.dist_along() == Distance::ZERO {
-                    // TODO src_i and dst_i may not work for pedestrians on contraflow sidewalks
-                    let i = map.get_l(req.start.lane()).src_i;
-                    if map.get_i(i).is_border() {
-                        counts.per_intersection.add(i, count);
-                    }
-                } else {
-                    let i = map.get_l(req.end.lane()).dst_i;
-                    if map.get_i(i).is_border() {
-                        counts.per_intersection.add(i, count);
-                    }
-                }
+            if let Some(path) = pathfinder.pathfind_v2(req.clone(), map) {
+                counts.update_with_path(path, *count, map);
             }
         }
         counts
+    }
+
+    pub fn update_with_path(&mut self, path: PathV2, count: usize, map: &Map) {
+        for step in path.get_steps() {
+            match step {
+                PathStepV2::Along(dr) | PathStepV2::Contraflow(dr) => {
+                    self.per_road.add(dr.road, count);
+                }
+                PathStepV2::Movement(m) | PathStepV2::ContraflowMovement(m) => {
+                    self.per_intersection.add(m.parent, count);
+                }
+            }
+        }
+
+        // If we're starting or ending at a border, count it
+        let req = path.get_req();
+        if req.start.dist_along() == Distance::ZERO {
+            // TODO src_i and dst_i may not work for pedestrians on contraflow sidewalks
+            let i = map.get_l(req.start.lane()).src_i;
+            if map.get_i(i).is_border() {
+                self.per_intersection.add(i, count);
+            }
+        } else {
+            let i = map.get_l(req.end.lane()).dst_i;
+            if map.get_i(i).is_border() {
+                self.per_intersection.add(i, count);
+            }
+        }
     }
 
     /// Print a comparison of counts. Only look at roads/intersections in `self`.

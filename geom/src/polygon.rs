@@ -2,11 +2,7 @@ use std::convert::TryFrom;
 use std::fmt;
 
 use anyhow::Result;
-use geo::algorithm::area::Area;
-use geo::algorithm::convex_hull::ConvexHull;
-use geo::algorithm::intersects::Intersects;
-use geo::algorithm::simplifyvw::SimplifyVWPreserve;
-use geo_booleanop::boolean::BooleanOp;
+use geo::{Area, BooleanOps, Contains, ConvexHull, Intersects, SimplifyVWPreserve};
 use serde::{Deserialize, Serialize};
 
 use abstutil::Tags;
@@ -109,11 +105,11 @@ impl Polygon {
     pub fn triangles(&self) -> Vec<Triangle> {
         let mut triangles: Vec<Triangle> = Vec::new();
         for slice in self.indices.chunks_exact(3) {
-            triangles.push(Triangle::new(
-                self.points[slice[0] as usize],
-                self.points[slice[1] as usize],
-                self.points[slice[2] as usize],
-            ));
+            triangles.push(Triangle {
+                pt1: self.points[slice[0] as usize],
+                pt2: self.points[slice[1] as usize],
+                pt3: self.points[slice[2] as usize],
+            });
         }
         triangles
     }
@@ -122,10 +118,9 @@ impl Polygon {
         (&self.points, &self.indices)
     }
 
-    /// Does this polygon contain the point either in the interior or right on the border? Haven't
-    /// tested carefully for polygons with holes.
+    /// Does this polygon contain the point in its interior?
     pub fn contains_pt(&self, pt: Pt2D) -> bool {
-        self.triangles().into_iter().any(|tri| tri.contains_pt(pt))
+        self.to_geo().contains(&geo::Point::from(pt))
     }
 
     pub fn get_bounds(&self) -> Bounds {
@@ -343,49 +338,49 @@ impl Polygon {
     }
 
     /// Union all of the polygons into one geo::MultiPolygon
-    pub fn union_all_into_multipolygon(mut list: Vec<Polygon>) -> geo::MultiPolygon<f64> {
+    pub fn union_all_into_multipolygon(mut list: Vec<Polygon>) -> geo::MultiPolygon {
         // TODO Not sure why this happened, or if this is really valid to construct...
         if list.is_empty() {
             return geo::MultiPolygon(Vec::new());
         }
 
-        let mut result = geo::MultiPolygon(vec![to_geo(list.pop().unwrap().points())]);
+        let mut result = geo::MultiPolygon(vec![list.pop().unwrap().into()]);
         for p in list {
-            result = result.union(&to_geo(p.points()));
+            result = result.union(&p.into());
         }
         result
     }
 
     pub fn intersection(&self, other: &Polygon) -> Vec<Polygon> {
-        from_multi(to_geo(self.points()).intersection(&to_geo(other.points())))
+        from_multi(self.to_geo().intersection(&other.to_geo()))
     }
 
     pub fn convex_hull(list: Vec<Polygon>) -> Polygon {
-        let mp: geo::MultiPolygon<f64> = list.into_iter().map(|p| to_geo(p.points())).collect();
+        let mp: geo::MultiPolygon = list.into_iter().map(|p| p.to_geo()).collect();
         mp.convex_hull().into()
     }
 
     pub fn concave_hull(points: Vec<Pt2D>, concavity: u32) -> Polygon {
         use geo::k_nearest_concave_hull::KNearestConcaveHull;
-        let points: Vec<geo::Point<f64>> = points.iter().map(|p| geo::Point::from(*p)).collect();
+        let points: Vec<geo::Point> = points.iter().map(|p| geo::Point::from(*p)).collect();
         points.k_nearest_concave_hull(concavity).into()
     }
 
     /// Find the "pole of inaccessibility" -- the most distant internal point from the polygon
     /// outline
     pub fn polylabel(&self) -> Pt2D {
-        let pt = polylabel::polylabel(&to_geo(self.points()), &1.0).unwrap();
+        let pt = polylabel::polylabel(&self.to_geo(), &1.0).unwrap();
         Pt2D::new(pt.x(), pt.y())
     }
 
     /// Do two polygons intersect at all?
     pub fn intersects(&self, other: &Polygon) -> bool {
-        to_geo(self.points()).intersects(&to_geo(other.points()))
+        self.to_geo().intersects(&other.to_geo())
     }
 
     /// Does this polygon intersect a polyline?
     pub fn intersects_polyline(&self, pl: &PolyLine) -> bool {
-        to_geo(self.points()).intersects(&pl.to_geo())
+        self.to_geo().intersects(&pl.to_geo())
     }
 
     /// Creates the outline around the polygon, with the thickness half straddling the polygon and
@@ -411,8 +406,8 @@ impl Polygon {
 
     /// Usually m^2, unless the polygon is in screen-space
     pub fn area(&self) -> f64 {
-        // Polygon orientation messes this up sometimes
-        to_geo(self.points()).unsigned_area()
+        // Don't use signed_area, since we may work with polygons that have different orientations
+        self.to_geo().unsigned_area()
     }
 
     /// Doesn't handle multiple crossings in and out.
@@ -562,7 +557,19 @@ impl Polygon {
     }
 
     pub fn simplify(&self, epsilon: f64) -> Polygon {
-        to_geo(self.points()).simplifyvw_preserve(&epsilon).into()
+        self.to_geo().simplifyvw_preserve(&epsilon).into()
+    }
+
+    /// An arbitrary placeholder value, when Option types aren't worthwhile
+    pub fn dummy() -> Self {
+        Polygon::rectangle(0.1, 0.1)
+    }
+
+    // A less verbose way of invoking the From/Into impl. Note this hides a potentially expensive
+    // clone. The eventual goal is for Polygon to directly wrap a geo::Polygon, at which point this
+    // cost goes away.
+    fn to_geo(&self) -> geo::Polygon {
+        self.clone().into()
     }
 }
 
@@ -592,52 +599,8 @@ pub struct Triangle {
     pub pt3: Pt2D,
 }
 
-impl Triangle {
-    pub fn new(pt1: Pt2D, pt2: Pt2D, pt3: Pt2D) -> Triangle {
-        Triangle { pt1, pt2, pt3 }
-    }
-
-    fn contains_pt(&self, pt: Pt2D) -> bool {
-        let x1 = self.pt1.x();
-        let y1 = self.pt1.y();
-        let x2 = self.pt2.x();
-        let y2 = self.pt2.y();
-        let x3 = self.pt3.x();
-        let y3 = self.pt3.y();
-        let px = pt.x();
-        let py = pt.y();
-
-        // Barycentric coefficients for pt
-        // Use epsilon to deal with small denominators
-        let epsilon = 0.000_000_1;
-        let l0 = ((y2 - y3) * (px - x3) + (x3 - x2) * (py - y3))
-            / (((y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)) + epsilon);
-        let l1 = ((y3 - y1) * (px - x3) + (x1 - x3) * (py - y3))
-            / (((y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)) + epsilon);
-        let l2 = 1.0 - l0 - l1;
-
-        for x in [l0, l1, l2] {
-            if x >= 1.0 || x <= 0.0 {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-fn to_geo(pts: &[Pt2D]) -> geo::Polygon<f64> {
-    geo::Polygon::new(
-        geo::LineString::from(
-            pts.iter()
-                .map(|pt| geo::Point::new(pt.x(), pt.y()))
-                .collect::<Vec<_>>(),
-        ),
-        Vec::new(),
-    )
-}
-
-impl From<geo::Polygon<f64>> for Polygon {
-    fn from(poly: geo::Polygon<f64>) -> Self {
+impl From<geo::Polygon> for Polygon {
+    fn from(poly: geo::Polygon) -> Self {
         let (exterior, interiors) = poly.into_inner();
         Polygon::with_holes(
             Ring::from(exterior),
@@ -646,11 +609,11 @@ impl From<geo::Polygon<f64>> for Polygon {
     }
 }
 
-impl From<Polygon> for geo::Polygon<f64> {
+impl From<Polygon> for geo::Polygon {
     fn from(poly: Polygon) -> Self {
         if let Some(mut rings) = poly.rings {
-            let exterior = rings.pop().expect("expected poly.rings[0] to be exterior");
-            let interiors: Vec<geo::LineString<f64>> =
+            let exterior = rings.remove(0);
+            let interiors: Vec<geo::LineString> =
                 rings.into_iter().map(geo::LineString::from).collect();
             Self::new(exterior.into(), interiors)
         } else {
@@ -665,7 +628,7 @@ impl From<Polygon> for geo::Polygon<f64> {
     }
 }
 
-fn from_multi(multi: geo::MultiPolygon<f64>) -> Vec<Polygon> {
+fn from_multi(multi: geo::MultiPolygon) -> Vec<Polygon> {
     // TODO This should just call Polygon::from, but while importing maps, it seems like
     // intersection() is hitting non-Ring cases that crash. So keep using buggy_new for now.
     multi

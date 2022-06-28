@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use aabb_quadtree::geom::{Point, Rect};
 use aabb_quadtree::QuadTree;
-use geo::algorithm::contains::Contains;
-use geo::prelude::{ClosestPoint, EuclideanDistance};
+use geo::{ClosestPoint, Contains, EuclideanDistance};
 
 use crate::conversions::pts_to_line_string;
 use crate::{Bounds, Distance, Pt2D};
@@ -13,7 +12,7 @@ use crate::{Bounds, Distance, Pt2D};
 /// A quad-tree to quickly find the closest points to some polylines.
 pub struct FindClosest<K> {
     // TODO maybe any type of geo:: thing
-    geometries: BTreeMap<K, geo::LineString<f64>>,
+    geometries: BTreeMap<K, geo::LineString>,
     quadtree: QuadTree<K>,
 }
 

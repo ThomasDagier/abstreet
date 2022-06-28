@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use abstutil::{deserialize_hashmap, serialize_hashmap, FixedMap, IndexableKey};
-use geom::{Distance, Duration, PolyLine, Time};
+use geom::{Distance, Duration, PolyLine, Time, Pt2D};
 use map_model::{DrivingSide, IntersectionID, LaneID, Map, Path, PathStep, Position, Traversable};
 
 use crate::mechanics::car::{Car, CarState};
@@ -192,6 +192,7 @@ impl DrivingSimState {
                 trip_and_person: params.trip_and_person,
                 wants_to_overtake: BTreeSet::new(),
             };
+            let mut start_crossing = false;
             if let Some(p) = params.maybe_parked_car {
                 let delay = match p.spot {
                     ParkingSpot::Onstreet(_, _) => self.time_to_unpark_onstreet,
@@ -266,6 +267,7 @@ impl DrivingSimState {
                 }
 
                 car.state = car.crossing_state(start_dist, now, ctx.map);
+                start_crossing = true;
             }
             ctx.scheduler
                 .push(car.state.get_end_time(), Command::UpdateCar(car.vehicle.id));
@@ -274,7 +276,15 @@ impl DrivingSimState {
                 .unwrap()
                 .insert_car_at_idx(idx, &car);
             self.waiting_to_spawn.remove(&car.vehicle.id);
+
+            if start_crossing {
+                // Don't call this earlier where we set crossing_state, because we're not in the
+                // queue yet
+                self.new_crossing_state(ctx, &car);
+            }
+
             self.cars.insert(car.vehicle.id, car);
+
             return None;
         }
         Some(params)
@@ -428,13 +438,23 @@ impl DrivingSimState {
                 for lane in blocked_starts {
                     // Calculate the exact positions along this blocked queue (which is ***NOT***
                     // the same queue that the unparking car is in!). Use that to update the
-                    // follower. Note that it's fine that the current car isn't currently in
-                    // self.cars; the static blockage doesn't need it.
+                    // follower.
+                    //
+                    // It SHOULD be fine that the current car isn't currently in self.cars; the
+                    // static blockage doesn't need it. But calculating positions on one queue may
+                    // recurse to the queue where the current car is. So temporarily make the car
+                    // visible in this query.
+                    self.cars.insert(car.vehicle.id, car.clone());
+
                     let dists = self.queues[&Traversable::Lane(*lane)].get_car_positions(
                         now,
                         &self.cars,
                         &self.queues,
                     );
+
+                    // Undo the above hack.
+                    self.cars.remove(&car.vehicle.id);
+
                     let idx = dists.iter().position(|entry| matches!(entry.member, Queued::StaticBlockage { cause, ..} if cause == car.vehicle.id)).unwrap();
                     self.update_follower(idx, &dists, now, ctx);
 
@@ -461,6 +481,7 @@ impl DrivingSimState {
                 car.state = car.crossing_state(front, now, ctx.map);
                 ctx.scheduler
                     .push(car.state.get_end_time(), Command::UpdateCar(car.vehicle.id));
+                self.new_crossing_state(ctx, car);
             }
             CarState::WaitingToAdvance { blocked_since } => {
                 // 'car' is the leader.
@@ -676,6 +697,7 @@ impl DrivingSimState {
                         car.state = car.crossing_state(our_dist, now, ctx.map);
                         ctx.scheduler
                             .push(car.state.get_end_time(), Command::UpdateCar(car.vehicle.id));
+                        self.new_crossing_state(ctx, car);
                         true
                     }
                     Some(ActionAtEnd::StopBiking(bike_rack)) => {
@@ -757,6 +779,7 @@ impl DrivingSimState {
                 car.state = car.crossing_state(dist, now, ctx.map);
                 ctx.scheduler
                     .push(car.state.get_end_time(), Command::UpdateCar(car.vehicle.id));
+                self.new_crossing_state(ctx, car);
 
                 self.update_follower(idx, dists, now, ctx);
 
@@ -882,6 +905,8 @@ impl DrivingSimState {
                         follower.state.get_end_time(),
                         Command::UpdateCar(follower_id),
                     );
+                    let follower = &self.cars[&follower_id];
+                    self.new_crossing_state(ctx, follower);
                 }
                 CarState::Crossing { .. } => {
                     // If the follower was still Crossing, they might not've been blocked by the
@@ -892,6 +917,9 @@ impl DrivingSimState {
                         follower.state.get_end_time(),
                         Command::UpdateCar(follower_id),
                     );
+                    // This'll possibly update the ETA
+                    let follower = &self.cars[&follower_id];
+                    self.new_crossing_state(ctx, follower);
                 }
                 CarState::ChangingLanes {
                     from, to, lc_time, ..
@@ -1262,6 +1290,18 @@ impl DrivingSimState {
             self.queues.insert(key, Queue::new(key, map));
         }
     }
+
+    fn new_crossing_state(&self, ctx: &mut Ctx, car: &Car) {
+        if self.queues[&car.router.head()].is_car_at_front(car.vehicle.id) {
+            if let Some(Traversable::Turn(turn)) = car.router.maybe_next() {
+                ctx.intersections.approaching_leader(
+                    AgentID::Car(car.vehicle.id),
+                    turn,
+                    car.state.get_end_time(),
+                );
+            }
+        }
+    }
 }
 
 // Queries
@@ -1282,10 +1322,11 @@ impl DrivingSimState {
                         id: AgentID::Car(car.vehicle.id),
                         pos: match queue.id.get_polyline(map).dist_along(entry.front) {
                             Ok((pt, _)) => pt,
-                            Err(err) => panic!(
+                            /*Err(err) => println!(
                                 "At {}, invalid dist_along of {} for queue {}: {}",
                                 now, entry.front, queue.id, err
-                            ),
+                            ),*/
+                            Err(_) => Pt2D::new(0.0, 0.0),
                         },
                         person: car.trip_and_person.map(|(_, p)| p),
                         parking: car.is_parking(),

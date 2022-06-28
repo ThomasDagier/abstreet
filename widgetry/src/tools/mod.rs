@@ -1,5 +1,14 @@
-pub mod screenshot;
-pub mod warper;
+mod lasso;
+mod load;
+mod popup;
+pub(crate) mod screenshot;
+mod url;
+pub(crate) mod warper;
+
+pub use lasso::{Lasso, PolyLineLasso};
+pub use load::{FileLoader, FutureLoader, RawBytes};
+pub use popup::PopupMsg;
+pub use url::URLManager;
 
 /// Store a cached key/value pair, only recalculating when the key changes.
 pub struct Cached<K: PartialEq + Clone, V> {
@@ -57,4 +66,8 @@ impl<K: PartialEq + Clone, V> Default for Cached<K, V> {
     fn default() -> Self {
         Cached::new()
     }
+}
+
+pub fn open_browser<I: AsRef<str>>(url: I) {
+    let _ = webbrowser::open(url.as_ref());
 }

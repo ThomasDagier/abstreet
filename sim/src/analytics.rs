@@ -1,12 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::Write;
+use std::fmt::Write;
 
-use anyhow::Result;
-use fs_err::File;
 use serde::{Deserialize, Serialize};
 
 use abstutil::Counter;
-use geom::{Duration, Time};
+use geom::{Duration, Pt2D, Time};
 use map_model::{
     CompressedMovementID, IntersectionID, LaneID, Map, MovementID, ParkingLotID, Path, PathRequest,
     RoadID, TransitRouteID, TransitStopID, Traversable, TurnID,
@@ -76,6 +74,81 @@ pub enum Problem {
     ArterialIntersectionCrossing(TurnID),
     /// Another vehicle wanted to over-take this cyclist somewhere on this lane or turn.
     OvertakeDesired(Traversable),
+    /// Too many people are crossing the same sidewalk or crosswalk at the same time.
+    PedestrianOvercrowding(Traversable),
+}
+
+impl Problem {
+    /// Returns the rough location where the problem occurred -- just at the granularity of an
+    /// entire lane, turn, or intersection.
+    pub fn point(&self, map: &Map) -> Pt2D {
+        match self {
+            Problem::IntersectionDelay(i, _) | Problem::ComplexIntersectionCrossing(i) => {
+                map.get_i(*i).polygon.center()
+            }
+            Problem::OvertakeDesired(on) | Problem::PedestrianOvercrowding(on) => {
+                on.get_polyline(map).middle()
+            }
+            Problem::ArterialIntersectionCrossing(t) => map.get_t(*t).geom.middle(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum ProblemType {
+    IntersectionDelay,
+    ComplexIntersectionCrossing,
+    OvertakeDesired,
+    ArterialIntersectionCrossing,
+    PedestrianOvercrowding,
+}
+
+impl From<&Problem> for ProblemType {
+    fn from(problem: &Problem) -> Self {
+        match problem {
+            Problem::IntersectionDelay(_, _) => Self::IntersectionDelay,
+            Problem::ComplexIntersectionCrossing(_) => Self::ComplexIntersectionCrossing,
+            Problem::OvertakeDesired(_) => Self::OvertakeDesired,
+            Problem::ArterialIntersectionCrossing(_) => Self::ArterialIntersectionCrossing,
+            Problem::PedestrianOvercrowding(_) => Self::PedestrianOvercrowding,
+        }
+    }
+}
+
+impl ProblemType {
+    pub fn count(self, problems: &[(Time, Problem)]) -> usize {
+        let mut cnt = 0;
+        for (_, problem) in problems {
+            if self == ProblemType::from(problem) {
+                cnt += 1;
+            }
+        }
+        cnt
+    }
+
+    pub fn all() -> Vec<ProblemType> {
+        vec![
+            ProblemType::IntersectionDelay,
+            ProblemType::ComplexIntersectionCrossing,
+            ProblemType::OvertakeDesired,
+            ProblemType::ArterialIntersectionCrossing,
+            ProblemType::PedestrianOvercrowding,
+        ]
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ProblemType::IntersectionDelay => "delays",
+            ProblemType::ComplexIntersectionCrossing => {
+                "where cyclists cross complex intersections"
+            }
+            ProblemType::OvertakeDesired => "where cars want to overtake cyclists",
+            ProblemType::ArterialIntersectionCrossing => {
+                "where pedestrians cross arterial intersections"
+            }
+            ProblemType::PedestrianOvercrowding => "where pedestrians are over-crowded",
+        }
+    }
 }
 
 impl Analytics {
@@ -505,6 +578,115 @@ impl Analytics {
         }
         pts
     }
+
+    pub fn problems_per_intersection(
+        &self,
+        now: Time,
+        id: IntersectionID,
+    ) -> Vec<(ProblemType, Vec<(Time, usize)>)> {
+        let window_size = Duration::minutes(15);
+
+        let mut raw_per_type: BTreeMap<ProblemType, Vec<Time>> = BTreeMap::new();
+        for problem_type in ProblemType::all() {
+            raw_per_type.insert(problem_type, Vec::new());
+        }
+
+        for (_, problems) in &self.problems_per_trip {
+            for (time, problem) in problems {
+                if *time > now {
+                    break;
+                }
+                let i = match problem {
+                    Problem::IntersectionDelay(i, _) | Problem::ComplexIntersectionCrossing(i) => {
+                        *i
+                    }
+                    Problem::OvertakeDesired(on) | Problem::PedestrianOvercrowding(on) => {
+                        match on {
+                            Traversable::Turn(t) => t.parent,
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
+                    Problem::ArterialIntersectionCrossing(t) => t.parent,
+                };
+                if id == i {
+                    raw_per_type
+                        .get_mut(&ProblemType::from(problem))
+                        .unwrap()
+                        .push(*time);
+                }
+            }
+        }
+
+        let mut result = Vec::new();
+        for (problem_type, mut raw) in raw_per_type {
+            raw.sort();
+            let mut pts = vec![(Time::START_OF_DAY, 0)];
+            let mut window = SlidingWindow::new(window_size);
+            for t in raw {
+                let count = window.add(t);
+                pts.push((t, count));
+            }
+            window.close_off_pts(&mut pts, now);
+            result.push((problem_type, pts));
+        }
+        result
+    }
+
+    pub fn problems_per_lane(
+        &self,
+        now: Time,
+        id: LaneID,
+    ) -> Vec<(ProblemType, Vec<(Time, usize)>)> {
+        let window_size = Duration::minutes(15);
+
+        let mut raw_per_type: BTreeMap<ProblemType, Vec<Time>> = BTreeMap::new();
+        for problem_type in ProblemType::all() {
+            raw_per_type.insert(problem_type, Vec::new());
+        }
+
+        for (_, problems) in &self.problems_per_trip {
+            for (time, problem) in problems {
+                if *time > now {
+                    break;
+                }
+                let l = match problem {
+                    Problem::OvertakeDesired(on) | Problem::PedestrianOvercrowding(on) => {
+                        match on {
+                            Traversable::Lane(l) => *l,
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
+                    _ => {
+                        continue;
+                    }
+                };
+                if id == l {
+                    raw_per_type
+                        .get_mut(&ProblemType::from(problem))
+                        .unwrap()
+                        .push(*time);
+                }
+            }
+        }
+
+        let mut result = Vec::new();
+        for (problem_type, mut raw) in raw_per_type {
+            raw.sort();
+            let mut pts = vec![(Time::START_OF_DAY, 0)];
+            let mut window = SlidingWindow::new(window_size);
+            for t in raw {
+                let count = window.add(t);
+                pts.push((t, count));
+            }
+            window.close_off_pts(&mut pts, now);
+            result.push((problem_type, pts));
+        }
+        result
+    }
 }
 
 impl Default for Analytics {
@@ -650,13 +832,22 @@ impl<X: Ord + Clone> TimeSeriesCount<X> {
         pts_per_type.into_iter().collect()
     }
 
-    pub fn export_csv<F: Fn(&X) -> usize>(&self, path: &str, extract_id: F) -> Result<()> {
-        let mut f = File::create(path)?;
-        writeln!(f, "id,agent_type,hour,count")?;
+    /// Returns the contents of a CSV file
+    pub fn export_csv<F: Fn(&X) -> usize>(&self, extract_id: F) -> String {
+        let mut out = String::new();
+        writeln!(out, "id,agent_type,hour,count").unwrap();
         for ((id, agent_type, hour), count) in &self.counts {
-            writeln!(f, "{},{:?},{},{}", extract_id(id), agent_type, hour, count)?;
+            writeln!(
+                out,
+                "{},{:?},{},{}",
+                extract_id(id),
+                agent_type,
+                hour,
+                count
+            )
+            .unwrap();
         }
-        Ok(())
+        out
     }
 }
 

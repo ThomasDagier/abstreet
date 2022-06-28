@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
-use stretch::geometry::{Rect, Size};
-use stretch::node::{Node, Stretch};
-use stretch::number::Number;
-use stretch::style::{
+use taffy::geometry::{Rect, Size};
+use taffy::node::{Node, Taffy};
+use taffy::number::Number;
+use taffy::style::{
     AlignItems, Dimension, FlexDirection, FlexWrap, JustifyContent, PositionType, Style,
 };
 
@@ -11,10 +11,10 @@ use abstutil::CloneableAny;
 use geom::{CornerRadii, Distance, Percent, Polygon};
 
 use crate::widgets::containers::{Container, Nothing};
-pub use crate::widgets::panel::{Panel, PanelBuilder};
+pub use crate::widgets::panel::{Panel, PanelBuilder, PanelDims};
 use crate::{
     Button, Choice, Color, DeferDraw, Drawable, Dropdown, EventCtx, GeomBatch, GfxCtx, JustDraw,
-    OutlineStyle, ScreenDims, ScreenPt, ScreenRectangle, Toggle,
+    OutlineStyle, ScreenDims, ScreenPt, ScreenRectangle, Text, Toggle,
 };
 
 pub mod autocomplete;
@@ -84,6 +84,19 @@ pub enum Outcome {
     Focused(String),
     /// Nothing happened
     Nothing,
+}
+
+impl Outcome {
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            Outcome::Clicked(x) => format!("Outcome::Clicked({x})"),
+            Outcome::ClickCustom(_) => format!("Outcome::ClickCustom(???)"),
+            Outcome::Changed(x) => format!("Outcome::Changed({x})"),
+            Outcome::DragDropReleased(x, _, _) => format!("Outcome::DragDropReleased({x}, ...)"),
+            Outcome::Focused(x) => format!("Outcome::Focused({x})"),
+            Outcome::Nothing => format!("Outcome::Nothing"),
+        }
+    }
 }
 
 /// When an action happens through a button-like widget, what data is plumbed back?
@@ -385,6 +398,16 @@ impl Widget {
         self.id = Some(id.into());
         self
     }
+
+    /// If the argument is true, don't actually create this widget. May be more readable than an
+    /// if/else block.
+    pub fn hide(self, x: bool) -> Widget {
+        if x {
+            Widget::nothing()
+        } else {
+            self
+        }
+    }
 }
 
 // Convenient?? constructors
@@ -495,27 +518,27 @@ impl Widget {
 
         // Pretend we're in a Panel and basically copy recompute_layout
         {
-            let mut stretch = Stretch::new();
-            let root = stretch
+            let mut taffy = Taffy::new();
+            let root = taffy
                 .new_node(
                     Style {
                         ..Default::default()
                     },
-                    Vec::new(),
+                    &[],
                 )
                 .unwrap();
 
             let mut nodes = vec![];
-            self.get_flexbox(root, &mut stretch, &mut nodes);
+            self.get_flexbox(root, &mut taffy, &mut nodes);
             nodes.reverse();
 
             let container_size = Size {
                 width: Number::Undefined,
                 height: Number::Undefined,
             };
-            stretch.compute_layout(root, container_size).unwrap();
+            taffy.compute_layout(root, container_size).unwrap();
 
-            self.apply_flexbox(&stretch, &mut nodes, 0.0, 0.0, (0.0, 0.0), ctx, true, true);
+            self.apply_flexbox(&taffy, &mut nodes, 0.0, 0.0, (0.0, 0.0), ctx, true, true);
             assert!(nodes.is_empty());
         }
 
@@ -544,6 +567,10 @@ impl Widget {
         )])
         .into_widget(ctx)
     }
+
+    pub fn placeholder(ctx: &EventCtx, label: &str) -> Widget {
+        Text::new().into_widget(ctx).named(label)
+    }
 }
 
 // Internals
@@ -564,7 +591,7 @@ impl Widget {
     }
 
     // Populate a flattened list of Nodes, matching the traversal order
-    fn get_flexbox(&self, parent: Node, stretch: &mut Stretch, nodes: &mut Vec<Node>) {
+    fn get_flexbox(&self, parent: Node, taffy: &mut Taffy, nodes: &mut Vec<Node>) {
         let mut style = self.layout.style;
         if let Some(container) = self.widget.downcast_ref::<Container>() {
             style.flex_direction = if container.is_row {
@@ -572,19 +599,19 @@ impl Widget {
             } else {
                 FlexDirection::Column
             };
-            let node = stretch.new_node(style, Vec::new()).unwrap();
+            let node = taffy.new_node(style, &[]).unwrap();
             nodes.push(node);
             for widget in &container.members {
-                widget.get_flexbox(node, stretch, nodes);
+                widget.get_flexbox(node, taffy, nodes);
             }
-            stretch.add_child(parent, node).unwrap();
+            taffy.add_child(parent, node).unwrap();
         } else {
             style.size = Size {
                 width: Dimension::Points(self.widget.get_dims().width as f32),
                 height: Dimension::Points(self.widget.get_dims().height as f32),
             };
-            let node = stretch.new_node(style, Vec::new()).unwrap();
-            stretch.add_child(parent, node).unwrap();
+            let node = taffy.new_node(style, &[]).unwrap();
+            taffy.add_child(parent, node).unwrap();
             nodes.push(node);
         }
     }
@@ -592,7 +619,7 @@ impl Widget {
     // TODO Clean up argument passing
     fn apply_flexbox(
         &mut self,
-        stretch: &Stretch,
+        taffy: &Taffy,
         nodes: &mut Vec<Node>,
         dx: f64,
         dy: f64,
@@ -601,7 +628,7 @@ impl Widget {
         recompute_layout: bool,
         defer_draw: bool,
     ) {
-        let result = stretch.layout(nodes.pop().unwrap()).unwrap();
+        let result = taffy.layout(nodes.pop().unwrap()).unwrap();
         let x: f64 = result.location.x.into();
         let y: f64 = result.location.y.into();
         let width: f64 = result.size.width.into();
@@ -657,7 +684,7 @@ impl Widget {
             // layout() doesn't return absolute position; it's relative to the container.
             for widget in &mut container.members {
                 widget.apply_flexbox(
-                    stretch,
+                    taffy,
                     nodes,
                     x + dx,
                     y + dy,

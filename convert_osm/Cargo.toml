@@ -13,7 +13,6 @@ fs-err = "2.6.0"
 geom = { path = "../geom" }
 kml = { path = "../kml" }
 log = "0.4.14"
-map_model = { path = "../map_model" }
+raw_map = { path = "../raw_map" }
 roxmltree = { version = "0.14.0", features=["std"] }
 serde = "1.0.123"
-regex = "1.5.4"

@@ -34,6 +34,13 @@ pub struct Options {
     pub camera_angle: CameraAngle,
     /// Draw building driveways.
     pub show_building_driveways: bool,
+    /// Draw stop signs.
+    pub show_stop_signs: bool,
+    /// Draw crosswalks and unmarked crossings.
+    pub show_crosswalks: bool,
+    /// If true, draw an icon for traffic signals both when zoomed and unzoomed. If false, color
+    /// the intersection when unzoomed and render the signal's current state when zoomed.
+    pub show_traffic_signal_icon: bool,
 
     /// When making a screen recording, enable this option to hide some UI elements
     pub minimal_controls: bool,
@@ -79,6 +86,9 @@ impl Options {
             toggle_day_night_colors: false,
             camera_angle: CameraAngle::TopDown,
             show_building_driveways: true,
+            show_stop_signs: true,
+            show_crosswalks: true,
+            show_traffic_signal_icon: false,
 
             time_increment: Duration::minutes(10),
             dont_draw_time_warp: false,
@@ -240,10 +250,10 @@ impl OptionsPanel {
                         let mut have_default = false;
                         let mut choices = vec![Choice::new("Map native language", None)];
                         for lang in app.map().get_languages() {
-                            if default == Some(lang.to_string()) {
+                            if default.as_ref() == Some(&lang) {
                                 have_default = true;
                             }
-                            choices.push(Choice::new(lang, Some(lang.to_string())));
+                            choices.push(Choice::new(lang.clone(), Some(lang)));
                         }
                         // We might be switching from a map that has more languages than this
                         // map

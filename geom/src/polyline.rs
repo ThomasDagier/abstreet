@@ -6,8 +6,8 @@ use geo::prelude::ClosestPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Angle, Bounds, Circle, Distance, GPSBounds, HashablePt2D, InfiniteLine, Line, Polygon, Pt2D,
-    Ring, EPSILON_DIST,
+    Angle, Bounds, Circle, Distance, GPSBounds, HashablePt2D, InfiniteLine, Line, LonLat, Polygon,
+    Pt2D, Ring, EPSILON_DIST,
 };
 
 // TODO How to tune this?
@@ -123,6 +123,22 @@ impl PolyLine {
         PolyLine::must_new(pts)
     }
 
+    pub fn maybe_reverse(&self, reverse: bool) -> PolyLine {
+        if reverse {
+            self.reversed()
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Returns the quadrant where the overall angle of this polyline (pointing from the first to
+    /// last point) is in. Output between 0 and 3.
+    pub fn quadrant(&self) -> i64 {
+        let line_angle: f64 = self.overall_angle().normalized_radians();
+        let line_angle = (line_angle / (std::f64::consts::PI / 2.0)) as i64;
+        line_angle.rem_euclid(4) + 1
+    }
+
     /// Glue together two polylines in order. The last point of `self` must be the same as the
     /// first point of `other`. This method handles removing unnecessary intermediate points if the
     /// extension happens to be at the same angle as the last line segment of `self`.
@@ -180,9 +196,15 @@ impl PolyLine {
     /// Extends `self` by a single point. If the new point is close enough to the last, dedupes.
     /// Doesn't clean up any intermediate points.
     pub fn optionally_push(self, pt: Pt2D) -> PolyLine {
+        let orig = self.clone();
         let mut pts = self.into_points();
         pts.push(pt);
-        PolyLine::deduping_new(pts).unwrap()
+        match PolyLine::deduping_new(pts) {
+            Ok(pl) => pl,
+            // If the polyline loops back on itself and someone manages to exactly repeat an
+            // earlier point, just don't add this point
+            Err(_) => orig,
+        }
     }
 
     /// Like `extend`, but handles the last and first point not matching by inserting that point.
@@ -417,6 +439,22 @@ impl PolyLine {
         self.shift_with_corrections(width)
     }
 
+    /// `self` represents some center, with `total_width`. Logically this shifts left by
+    /// `total_width / 2`, then right by `width_from_left_side`, but without exasperating sharp
+    /// bends.
+    pub fn shift_from_center(
+        &self,
+        total_width: Distance,
+        width_from_left_side: Distance,
+    ) -> Result<PolyLine> {
+        let half_width = total_width / 2.0;
+        if width_from_left_side < half_width {
+            self.shift_left(half_width - width_from_left_side)
+        } else {
+            self.shift_right(width_from_left_side - half_width)
+        }
+    }
+
     // Things to remember about shifting polylines:
     // - the length before and after probably don't match up
     // - the number of points may not match
@@ -518,6 +556,26 @@ impl PolyLine {
             indices.extend(vec![len - high_idx, len - high_idx - 1, high_idx]);
         }
         Polygon::precomputed(points, indices)
+    }
+
+    /// This does the equivalent of make_polygons, returning the (start left, start right, end
+    /// left, end right). Fails rarely.
+    pub fn get_four_corners_of_thickened(
+        &self,
+        width: Distance,
+    ) -> Option<(Pt2D, Pt2D, Pt2D, Pt2D)> {
+        let mut side1 = self
+            .shift_with_sharp_angles(width / 2.0, MITER_THRESHOLD)
+            .ok()?;
+        let mut side2 = self
+            .shift_with_sharp_angles(-width / 2.0, MITER_THRESHOLD)
+            .ok()?;
+        Some((
+            side1[0],
+            side2[0],
+            side1.pop().unwrap(),
+            side2.pop().unwrap(),
+        ))
     }
 
     pub fn exact_dashed_polygons(
@@ -889,6 +947,28 @@ impl PolyLine {
         geojson::Geometry::new(geojson::Value::LineString(pts))
     }
 
+    pub fn from_geojson(feature: &geojson::Feature, gps: Option<&GPSBounds>) -> Result<PolyLine> {
+        if let Some(geojson::Geometry {
+            value: geojson::Value::LineString(ref pts),
+            ..
+        }) = feature.geometry
+        {
+            let mut points = Vec::new();
+            for pt in pts {
+                let x = pt[0];
+                let y = pt[1];
+                if let Some(ref gps) = gps {
+                    points.push(LonLat::new(x, y).to_pt(gps));
+                } else {
+                    points.push(Pt2D::new(x, y));
+                }
+            }
+            PolyLine::new(points)
+        } else {
+            bail!("Input isn't a LineString")
+        }
+    }
+
     /// Returns the point on the polyline closest to the query.
     pub fn project_pt(&self, query: Pt2D) -> Pt2D {
         match self
@@ -907,8 +987,8 @@ impl PolyLine {
         self.first_pt().angle_to(self.last_pt())
     }
 
-    pub(crate) fn to_geo(&self) -> geo::LineString<f64> {
-        let pts: Vec<geo::Point<f64>> = self
+    pub(crate) fn to_geo(&self) -> geo::LineString {
+        let pts: Vec<geo::Point> = self
             .pts
             .iter()
             .map(|pt| geo::Point::new(pt.x(), pt.y()))

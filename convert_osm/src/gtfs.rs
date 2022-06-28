@@ -7,10 +7,7 @@ use serde::Deserialize;
 use abstutil::MultiMap;
 use geom::{LonLat, PolyLine, Pt2D};
 use kml::{ExtraShape, ExtraShapes};
-use map_model::raw::{RawMap, RawTransitRoute, RawTransitStop};
-use map_model::PathConstraints;
-
-use regex::Regex;
+use raw_map::{RawMap, RawTransitRoute, RawTransitStop, RawTransitType};
 
 pub fn import(map: &mut RawMap) -> Result<()> {
     // Collect metadata about routes
@@ -20,10 +17,10 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         let rec: Route = rec?;
         // See https://developers.google.com/transit/gtfs/reference#routestxt
         let route_type = match rec.route_type {
-            3 => PathConstraints::Bus,
+            3 => RawTransitType::Bus,
             // These aren't distinguished in the map model yet. Trams and streetcars might
             // particularly mess up...  or just fail to snap to a road later.
-            0 | 1 | 2 => PathConstraints::Train,
+            0 | 1 | 2 => RawTransitType::Train,
             _ => continue,
         };
         map.transit_routes.push(RawTransitRoute {
@@ -53,6 +50,10 @@ pub fn import(map: &mut RawMap) -> Result<()> {
     }
 
     // Scrape all shape data. Map from shape_id to points and the sequence number
+    //
+    // If this file is missing, one idea is to just draw straight lines between stops. We only use
+    // the shape currently to pick an entry/exit border, so this could be a half-reasonable
+    // workaround.
     let mut raw_shapes: HashMap<ShapeID, Vec<(Pt2D, usize)>> = HashMap::new();
     for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/shapes.txt"))?)
         .deserialize()
@@ -91,7 +92,7 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         // Points are usually sorted, but just in case...
         pts.sort_by_key(|(_, seq)| *seq);
         let pts: Vec<Pt2D> = pts.into_iter().map(|(pt, _)| pt).collect();
-        match PolyLine::new(pts) {
+        /*match PolyLine::new(pts) {
             Ok(pl) => {
                 route.shape = pl;
                 transit_routes.push(route);
@@ -100,7 +101,9 @@ pub fn import(map: &mut RawMap) -> Result<()> {
                 warn!("Route {} has a weird shape: {}", route.gtfs_id, err);
                 continue;
             }
-        }
+        }*/
+        route.shape = PolyLine::unchecked_new(pts);
+        transit_routes.push(route);
     }
     map.transit_routes = transit_routes;
 
@@ -129,31 +132,8 @@ pub fn import(map: &mut RawMap) -> Result<()> {
 
     // Assign the stops for every route
     let mut stop_ids = HashSet::new();
-    for route in &mut map.transit_routes {        
-        //let trip_id: &TripID = route_to_trip[&RouteID(route.gtfs_id.clone())];
-
-        // ADDED THIS CODE TO SELECT A SPECIFIC TRIP FROM ALL AVAILABLE 
-        let mut trip_id: &TripID = {
-            // had to add regex on top of the file and in the cargo.toml
-            let re = Regex::new(r"16:[0-9]{2}:[0-9]{2}").unwrap();
-            let mut kek: String = "kek".to_string();
-            for rec in csv::Reader::from_reader(File::open(map.name.city.input_path("gtfs/stop_times.txt"))?).deserialize() {
-                let rec: StopTime2 = rec?;
-                // the trip selected is taken at 16h so we make sure this is the "typical" trip
-                if re.is_match(&rec.departure_time[..]) && rec.trip_id.to_string().contains(&RouteID(route.gtfs_id.clone()).to_string()) {
-                    kek = rec.trip_id.to_string();
-                    break;
-                }
-            }
-            &TripID(kek)
-        };
-        // if no trip were found (wich means the bus is a night bus) we select any trip
-        if trip_id.to_string() == "kek" {
-            trip_id = route_to_trip[&RouteID(route.gtfs_id.clone())];
-        }
-        println!("{} -> {}", route.gtfs_id.clone(), trip_id);
-        //
-
+    for route in &mut map.transit_routes {
+        let trip_id = route_to_trip[&RouteID(route.gtfs_id.clone())];
         let mut stops = trip_to_stops.remove(&trip_id).unwrap_or_else(Vec::new);
         stops.sort_by_key(|(_, seq)| *seq);
         for (stop_id, _) in stops {
@@ -198,18 +178,6 @@ pub fn import(map: &mut RawMap) -> Result<()> {
         dump_kml(map);
     }
 
-    // PRINT ALL STOPS FOR EACH BUS LINE
-    println!("");
-    for kek in map.transit_routes.iter() {
-        println!("{}", kek.short_name);
-        for s in kek.stops.iter() {
-            println!("{:?}", s);
-        }
-        println!("");
-    }
-
-    // We CAN TRY TO CHANGE transit.rs (line 28) TO ALLOW MORE STOPS TO BE CREATED
-
     Ok(())
 }
 
@@ -222,24 +190,13 @@ struct StopID(String);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize)]
 struct RouteID(String);
 
-// ADDED TO USE A .to_string FOR TripID AND RouteID
-impl std::fmt::Display for TripID {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::fmt::Display for RouteID {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 #[derive(Deserialize)]
 struct Route {
     route_id: RouteID,
     route_short_name: String,
     route_long_name: String,
+    // Missing from São Paulo
+    #[serde(default)]
     route_desc: String,
     route_type: usize,
 }
@@ -272,13 +229,6 @@ struct StopTime {
     trip_id: TripID,
     stop_id: StopID,
     stop_sequence: usize,
-}
-
-// ADDED AN OTHER StopTime STRUCT AS WE WANNA USE THE departure_time FIELD TO SELECT A TRIP
-#[derive(Deserialize)]
-struct StopTime2 {
-    trip_id: TripID,
-    departure_time: String,
 }
 
 fn dump_kml(map: &RawMap) {

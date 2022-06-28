@@ -198,7 +198,7 @@ impl SidewalkPathfinder {
                     } else {
                         first_stop = Some(*stop2);
                         possible_routes = map.get_routes_serving_stop(*stop2);
-                        assert!(!possible_routes.is_empty());
+                        //assert!(!possible_routes.is_empty());
                     }
                 }
                 WalkingNode::LeaveMap(i) => {
@@ -221,7 +221,9 @@ impl SidewalkPathfinder {
                     if let Some(stop1) = first_stop {
                         return Some((
                             stop1,
-                            Some(last_stop.expect("impossible transit transfer")),
+                            //Some(last_stop.expect("impossible transit transfer")),
+                            Some(last_stop?),
+
                             possible_routes[0].id,
                         ));
                     }

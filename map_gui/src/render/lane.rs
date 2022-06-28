@@ -100,14 +100,15 @@ impl DrawLane {
             }
             LaneType::SharedLeftTurn => {
                 let thickness = Distance::meters(0.25);
+                let center_line = app.cs().road_center_line(map);
                 batch.push(
-                    app.cs().road_center_line,
+                    center_line,
                     lane.lane_center_pts
                         .must_shift_right((lane.width - thickness) / 2.0)
                         .make_polygons(thickness),
                 );
                 batch.push(
-                    app.cs().road_center_line,
+                    center_line,
                     lane.lane_center_pts
                         .must_shift_left((lane.width - thickness) / 2.0)
                         .make_polygons(thickness),
@@ -175,7 +176,9 @@ impl DrawLane {
         }
 
         if road.is_private() {
-            batch.push(app.cs().private_road.alpha(0.5), self.polygon.clone());
+            if let Some(color) = app.cs().private_road {
+                batch.push(color.alpha(0.5), self.polygon.clone());
+            }
         }
 
         if self.zorder < 0 {

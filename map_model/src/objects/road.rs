@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use abstutil::{deserialize_usize, serialize_usize, Tags};
 use geom::{Distance, PolyLine, Polygon, Speed};
+use raw_map::Direction;
 
 use crate::raw::{OriginalRoad, RestrictionType};
 use crate::{
@@ -42,29 +43,18 @@ impl RoadID {
             },
         ]
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Direction {
-    Fwd,
-    Back,
-}
-
-impl Direction {
-    pub fn opposite(self) -> Direction {
-        match self {
-            Direction::Fwd => Direction::Back,
-            Direction::Back => Direction::Fwd,
-        }
-    }
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Direction::Fwd => write!(f, "forwards"),
-            Direction::Back => write!(f, "backwards"),
-        }
+    pub fn both_sides(self) -> [RoadSideID; 2] {
+        [
+            RoadSideID {
+                road: self,
+                side: SideOfRoad::Right,
+            },
+            RoadSideID {
+                road: self,
+                side: SideOfRoad::Left,
+            },
+        ]
     }
 }
 
@@ -213,9 +203,9 @@ impl Road {
             .collect()
     }
 
-    /// Gets the left PolyLine of the road
-    pub fn get_left_side(&self) -> PolyLine {
-        self.center_pts.must_shift_left(self.get_half_width())
+    pub fn shift_from_left_side(&self, width_from_left_side: Distance) -> Result<PolyLine> {
+        self.center_pts
+            .shift_from_center(self.get_width(), width_from_left_side)
     }
 
     /// lane must belong to this road. Offset 0 is the centermost lane on each side of a road, then
@@ -539,16 +529,7 @@ impl Road {
     pub(crate) fn recreate_lanes(&mut self, lane_specs_ltr: Vec<LaneSpec>) {
         self.lanes.clear();
 
-        let mut total_width = Distance::ZERO;
-        for lane in &lane_specs_ltr {
-            total_width += lane.width;
-        }
-        // TODO Maybe easier to use the road's "yellow center line" and shift left/right from
-        // there.
-        let road_left_pts = self
-            .center_pts
-            .shift_left(total_width / 2.0)
-            .unwrap_or_else(|_| self.center_pts.clone());
+        let total_width = lane_specs_ltr.iter().map(|x| x.width).sum();
 
         let mut width_so_far = Distance::ZERO;
         for lane in lane_specs_ltr {
@@ -563,18 +544,18 @@ impl Road {
                 (self.dst_i, self.src_i)
             };
 
-            let pl = if let Ok(pl) = road_left_pts.shift_right(width_so_far + (lane.width / 2.0)) {
-                pl
-            } else {
-                error!("{} geometry broken; lane not shifted!", id);
-                road_left_pts.clone()
-            };
+            width_so_far += lane.width / 2.0;
+            let pl = self
+                .center_pts
+                .shift_from_center(total_width, width_so_far)
+                .unwrap_or_else(|_| self.center_pts.clone());
+            width_so_far += lane.width / 2.0;
+
             let lane_center_pts = if lane.dir == Direction::Fwd {
                 pl
             } else {
                 pl.reversed()
             };
-            width_so_far += lane.width;
 
             self.lanes.push(Lane {
                 id,
@@ -629,6 +610,17 @@ impl Road {
             return false;
         }
         self.get_rank() != osm::RoadRank::Local
+    }
+
+    pub fn oneway_for_driving(&self) -> Option<Direction> {
+        LaneSpec::oneway_for_driving(&self.lane_specs())
+    }
+
+    /// Does either end of this road lead nowhere for cars?
+    /// (Asking this for a non-driveable road may be kind of meaningless)
+    pub fn is_deadend_for_driving(&self, map: &Map) -> bool {
+        map.get_i(self.src_i).is_deadend_for_driving(map)
+            || map.get_i(self.dst_i).is_deadend_for_driving(map)
     }
 }
 

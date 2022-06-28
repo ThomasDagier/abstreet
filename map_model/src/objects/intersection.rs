@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use abstutil::{deserialize_usize, serialize_usize};
 use geom::{Distance, Polygon};
+use raw_map::IntersectionType;
 
 use crate::{
     osm, CompressedMovementID, DirectedRoadID, LaneID, Map, Movement, MovementID, PathConstraints,
@@ -25,14 +26,6 @@ impl fmt::Display for IntersectionID {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Intersection #{}", self.0)
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub enum IntersectionType {
-    StopSign,
-    TrafficSignal,
-    Border,
-    Construction,
 }
 
 /// An intersection connects roads. Most have >2 roads and are controlled by stop signs or traffic
@@ -112,8 +105,18 @@ impl Intersection {
         self.roads.len() == 2
     }
 
-    /// Does this intersection connect to only a single road segment?
-    pub fn is_deadend(&self) -> bool {
+    /// Does this intersection connect to only a single driveable road segment?
+    pub fn is_deadend_for_driving(&self, map: &Map) -> bool {
+        // If a driveable road leads only to a cycle lane, then that's still a dead-end for driving
+        self.roads
+            .iter()
+            .filter(|r| PathConstraints::Car.can_use_road(map.get_r(**r), map))
+            .count()
+            == 1
+    }
+
+    /// Ignoring mode of travel, is this intersection only connected to one road?
+    pub fn is_deadend_for_everyone(&self) -> bool {
         self.roads.len() == 1
     }
 

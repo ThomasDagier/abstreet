@@ -6,7 +6,7 @@ use abstutil::Timer;
 use geom::{Distance, Duration, FindClosest, HashablePt2D, Time};
 
 use crate::make::match_points_to_lanes;
-use crate::raw::{RawMap, RawTransitRoute, RawTransitStop};
+use crate::raw::{RawMap, RawTransitRoute, RawTransitStop, RawTransitType};
 use crate::{
     LaneID, Map, PathConstraints, Position, TransitRoute, TransitRouteID, TransitStop,
     TransitStopID,
@@ -25,7 +25,7 @@ pub fn finalize_transit(map: &mut Map, raw: &RawMap, timer: &mut Timer) {
         // Stops can be very close to intersections
         Distance::ZERO,
         // Stops shouldn't be far from sidewalks
-        Distance::meters(3.0),
+        Distance::meters(10.0),
         timer,
     );
 
@@ -33,14 +33,17 @@ pub fn finalize_transit(map: &mut Map, raw: &RawMap, timer: &mut Timer) {
     let mut gtfs_to_stop_id: HashMap<String, TransitStopID> = HashMap::new();
     for stop in raw.transit_stops.values() {
         if let Err(err) = create_stop(stop, &sidewalk_pts, &mut gtfs_to_stop_id, map) {
-            warn!("Couldn't create stop {}: {}", stop.gtfs_id, err);
+            warn!("Couldn't create stop {} ({}): {}", stop.name, stop.gtfs_id, err);
         }
     }
 
     let snapper = BorderSnapper::new(map);
     for route in &raw.transit_routes {
         if let Err(err) = create_route(route, map, &gtfs_to_stop_id, &snapper) {
-            warn!("Couldn't snap route {}: {}", route.gtfs_id, err);
+            warn!(
+                "Couldn't snap route {} ({}): {}",
+                route.gtfs_id, route.short_name, err
+            );
         }
     }
 
@@ -167,7 +170,7 @@ fn create_route(
             .get(0)
             .ok_or_else(|| anyhow!("couldn't find where shape enters map"))?;
         // Snap that to a border
-        let borders = if route.route_type == PathConstraints::Bus {
+        let borders = if route.route_type == RawTransitType::Bus {
             &snapper.bus_incoming_borders
         } else {
             &snapper.train_incoming_borders
@@ -194,13 +197,22 @@ fn create_route(
             .last()
             .ok_or_else(|| anyhow!("couldn't find where shape leaves map"))?;
         // Snap that to a border
-        let borders = if route.route_type == PathConstraints::Bus {
+        let borders = if route.route_type == RawTransitType::Bus {
             &snapper.bus_outgoing_borders
         } else {
             &snapper.train_outgoing_borders
         };
         match borders.closest_pt(exit_pt, border_snap_threshold) {
-            Some((l, _)) => Some(l),
+            Some((lane, _)) => {
+                // Edge case: the last stop is on the same road as the border. We can't lane-change
+                // suddenly, so match the lane in that case.
+                let last_stop_lane = map.get_ts(*stops.last().unwrap()).driving_pos.lane();
+                Some(if lane.road == last_stop_lane.road {
+                    last_stop_lane
+                } else {
+                    lane
+                })
+            }
             None => bail!(
                 "Couldn't find a {:?} border near end {}",
                 route.route_type,
@@ -222,23 +234,16 @@ fn create_route(
         stops,
         start,
         end_border,
-        route_type: route.route_type,
+        route_type: match route.route_type {
+            RawTransitType::Bus => PathConstraints::Bus,
+            RawTransitType::Train => PathConstraints::Train,
+        },
         spawn_times: spawn_times.clone(),
         orig_spawn_times: spawn_times,
     };
 
     // Check that the paths are valid
-    for req in result.all_path_requests(map) {
-        if req.start == req.end {
-            bail!(
-                "Start/end position and a stop position are on top of each other? {}",
-                req
-            );
-        }
-        if let Err(err) = map.pathfind(req) {
-            bail!("Created the route, but pathfinding failed: {}", err);
-        }
-    }
+    result.all_paths(map)?;
 
     map.transit_routes.push(result);
     Ok(())

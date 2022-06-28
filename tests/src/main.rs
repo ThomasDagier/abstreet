@@ -2,14 +2,15 @@
 
 use std::io::Write;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use fs_err::File;
 use rand::seq::SliceRandom;
 
 use abstio::{CityName, MapName};
 use abstutil::Timer;
-use geom::{Distance, Duration, Time};
-use map_model::{IntersectionID, Map, Perimeter};
+use geom::{Duration, Time};
+use map_model::{IntersectionID, LaneType, Map, Perimeter, RoadID};
+use sim::{AlertHandler, PrebakeSummary, Sim, SimFlags, SimOptions};
 use synthpop::{IndividTrip, PersonSpec, Scenario, TripEndpoint, TripMode, TripPurpose};
 
 fn main() -> Result<()> {
@@ -20,6 +21,9 @@ fn main() -> Result<()> {
     )))?;
     test_map_importer()?;
     check_proposals()?;
+    ab_test_spurious_diff()?;
+    bus_test()?;
+    bus_route_test()?;
     smoke_test()?;
     Ok(())
 }
@@ -55,23 +59,7 @@ fn import_map(path: String) -> Map {
         path,
         name,
         clip,
-        convert_osm::Options {
-            map_config: map_model::MapConfig {
-                driving_side: map_model::DrivingSide::Right,
-                bikes_can_use_bus_lanes: true,
-                inferred_sidewalks: true,
-                street_parking_spot_length: Distance::meters(8.0),
-                turn_on_red: false,
-            },
-            onstreet_parking: convert_osm::OnstreetParking::JustOSM,
-            public_offstreet_parking: convert_osm::PublicOffstreetParking::None,
-            private_offstreet_parking: convert_osm::PrivateOffstreetParking::FixedPerBldg(0),
-            include_railroads: true,
-            extra_buildings: None,
-            skip_local_roads: false,
-            filter_crosswalks: false,
-            gtfs_url: None,
-        },
+        convert_osm::Options::default_for_side(map_model::DrivingSide::Right),
         &mut timer,
     );
     Map::create_from_raw(raw, map_model::RawToMapOptions::default(), &mut timer)
@@ -106,37 +94,6 @@ fn smoke_test() -> Result<()> {
         let mut rng = sim::SimFlags::for_test("smoke_test").make_rng();
         sim.instantiate(&scenario, &map, &mut rng, &mut timer);
         sim.timed_step(&map, Duration::hours(1), &mut None, &mut timer);
-
-        #[allow(clippy::collapsible_if)]
-        if (name.city == CityName::seattle()
-            && vec!["downtown", "lakeslice", "montlake"].contains(&name.map.as_str()))
-            || name == MapName::new("pl", "krakow", "center")
-        {
-            if false {
-                dump_route_goldenfile(&map)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Describe all public transit routes and keep under version control to spot diffs easily.
-fn dump_route_goldenfile(map: &map_model::Map) -> Result<()> {
-    let path = abstio::path(format!(
-        "route_goldenfiles/{}.txt",
-        map.get_name().as_filename()
-    ));
-    let mut f = File::create(path)?;
-    for tr in map.all_transit_routes() {
-        writeln!(f, "{} from {} to {:?}", tr.gtfs_id, tr.start, tr.end_border)?;
-        for ts in &tr.stops {
-            let ts = map.get_ts(*ts);
-            writeln!(
-                f,
-                "  {}: {} driving, {} sidewalk",
-                ts.name, ts.driving_pos, ts.sidewalk_pos
-            )?;
-        }
     }
     Ok(())
 }
@@ -167,7 +124,7 @@ fn check_proposals() -> Result<()> {
     Ok(())
 }
 
-/// Verify lane-chaging behavior is overall reasonable, by asserting all cars and bikes can
+/// Verify lane-changing behavior is overall reasonable, by asserting all cars and bikes can
 /// complete their trip under a time limit.
 fn test_lane_changing(map: &Map) -> Result<()> {
     // This uses a fixed RNG seed
@@ -258,6 +215,8 @@ fn test_blockfinding() -> Result<()> {
         MapName::new("gb", "london", "camden"),
         MapName::new("gb", "london", "southwark"),
         MapName::new("gb", "manchester", "levenshulme"),
+        MapName::new("fr", "lyon", "center"),
+        MapName::new("us", "seattle", "north_seattle"),
     ] {
         let map = map_model::Map::load_synchronously(name.path(), &mut timer);
         let mut single_blocks = Perimeter::find_all_single_blocks(&map);
@@ -276,7 +235,10 @@ fn test_blockfinding() -> Result<()> {
         let mut num_partial_merges = 0;
         let mut merged = Vec::new();
         for perimeters in partitions {
-            let newly_merged = Perimeter::merge_all(&map, perimeters, false);
+            let stepwise_debug = false;
+            let use_expensive_blockfinding = false;
+            let newly_merged =
+                Perimeter::merge_all(&map, perimeters, stepwise_debug, use_expensive_blockfinding);
             if newly_merged.len() > 1 {
                 num_partial_merges += 1;
             }
@@ -286,12 +248,133 @@ fn test_blockfinding() -> Result<()> {
         let mut num_merged_block_failures = 0;
         for perimeter in merged {
             if perimeter.to_block(&map).is_err() {
+                // Note this means the LTN UI will fallback to use_expensive_blockfinding = true
                 num_merged_block_failures += 1;
             }
         }
 
         writeln!(f, "{}", name.path())?;
         writeln!(f, "    {} single blocks ({} failures to blockify), {} partial merges, {} failures to blockify partitions", num_singles_originally, num_singles_originally - num_singles_blockified, num_partial_merges, num_merged_block_failures)?;
+    }
+    Ok(())
+}
+
+fn ab_test_spurious_diff() -> Result<()> {
+    let mut timer = Timer::new("A/B test spurious diff");
+    let mut map =
+        map_model::Map::load_synchronously(MapName::seattle("montlake").path(), &mut timer);
+    let scenario: Scenario =
+        abstio::read_binary(abstio::path_scenario(map.get_name(), "weekday"), &mut timer);
+
+    let no_map_edits = run_sim(&map, &scenario, &mut timer);
+
+    // Make some arbitrary map edits
+    let mut edits = map.get_edits().clone();
+    // It doesn't matter much which road, but if the map changes over time, it could eventually be
+    // necessary to fiddle with this
+    edits.commands.push(map.edit_road_cmd(RoadID(190), |new| {
+        assert_eq!(new.lanes_ltr[1].lt, LaneType::Parking);
+        new.lanes_ltr[1].lt = LaneType::Biking;
+    }));
+    map.must_apply_edits(edits, &mut timer);
+    map.recalculate_pathfinding_after_edits(&mut timer);
+
+    let with_map_edits = run_sim(&map, &scenario, &mut timer);
+
+    // Undo the edits
+    let mut edits = map.get_edits().clone();
+    edits.commands.pop();
+    assert!(edits.commands.is_empty());
+    map.must_apply_edits(edits, &mut timer);
+    map.recalculate_pathfinding_after_edits(&mut timer);
+
+    let after_undoing_map_edits = run_sim(&map, &scenario, &mut timer);
+
+    if no_map_edits.total_trip_duration_seconds == with_map_edits.total_trip_duration_seconds {
+        bail!("Changing a parking lane to a bike lane had no effect at all; this is super unlikely; the test is somehow broken");
+    }
+
+    // Ignore tiny floating point errors
+    if no_map_edits.total_trip_duration_seconds.round()
+        != after_undoing_map_edits.total_trip_duration_seconds.round()
+    {
+        bail!("Undoing map edits resulted in a diff relative to running against the original map: {:?} vs {:?}", no_map_edits, after_undoing_map_edits);
+    }
+
+    Ok(())
+}
+
+fn run_sim(map: &Map, scenario: &Scenario, timer: &mut Timer) -> PrebakeSummary {
+    let mut opts = SimOptions::new("prebaked");
+    opts.alerts = AlertHandler::Silence;
+    let mut sim = Sim::new(map, opts);
+    // Bit of an abuse of this, but just need to fix the rng seed.
+    let mut rng = SimFlags::for_test("prebaked").make_rng();
+    sim.instantiate(scenario, map, &mut rng, timer);
+
+    // Run until a few hours after the end of the day
+    sim.timed_step(
+        map,
+        sim.get_end_of_day() - Time::START_OF_DAY + Duration::hours(3),
+        &mut None,
+        timer,
+    );
+
+    PrebakeSummary::new(&sim, scenario)
+}
+
+/// Describe all public transit routes and keep under version control to spot diffs easily.
+fn bus_route_test() -> Result<()> {
+    let mut timer = Timer::new("bus route test");
+    for name in vec![
+        MapName::seattle("arboretum"),
+        MapName::new("br", "sao_paulo", "aricanduva"),
+    ] {
+        let map = map_model::Map::load_synchronously(name.path(), &mut timer);
+        let path = abstio::path(format!(
+            "../tests/goldenfiles/bus_routes/{}.txt",
+            map.get_name().as_filename()
+        ));
+        let mut f = File::create(path)?;
+        for tr in map.all_transit_routes() {
+            writeln!(
+                f,
+                "{} ({}) from {} to {:?}",
+                tr.gtfs_id, tr.short_name, tr.start, tr.end_border
+            )?;
+            for ts in &tr.stops {
+                let ts = map.get_ts(*ts);
+                writeln!(
+                    f,
+                    "  {}: {} driving, {} sidewalk",
+                    ts.name, ts.driving_pos, ts.sidewalk_pos
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// On set maps with bus routes imported, simulate an hour to flush out crashes.
+fn bus_test() -> Result<()> {
+    let mut timer = Timer::new("bus smoke test");
+    for name in vec![
+        MapName::seattle("arboretum"),
+        MapName::new("us", "san_francisco", "downtown"),
+        MapName::new("br", "sao_paulo", "aricanduva"),
+        MapName::new("br", "sao_paulo", "center"),
+        MapName::new("br", "sao_paulo", "sao_miguel_paulista"),
+    ] {
+        let map = map_model::Map::load_synchronously(name.path(), &mut timer);
+        let mut scenario = Scenario::empty(&map, "bus smoke test");
+        scenario.only_seed_buses = None;
+        let mut opts = sim::SimOptions::new("smoke_test");
+        opts.alerts = sim::AlertHandler::Silence;
+        let mut sim = sim::Sim::new(&map, opts);
+        // Bit of an abuse of this, but just need to fix the rng seed.
+        let mut rng = sim::SimFlags::for_test("smoke_test").make_rng();
+        sim.instantiate(&scenario, &map, &mut rng, &mut timer);
+        sim.timed_step(&map, Duration::hours(1), &mut None, &mut timer);
     }
     Ok(())
 }

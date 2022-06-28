@@ -25,6 +25,8 @@ lazy_static::lazy_static! {
             "../data".to_string()
         } else if file_exists("../../data/".to_string()) {
             "../../data".to_string()
+        } else if file_exists("../../../data/".to_string()) {
+            "../../../data".to_string()
         } else {
             panic!("Can't find the data/ directory");
         }
@@ -46,6 +48,8 @@ lazy_static::lazy_static! {
             "../data".to_string()
         } else if file_exists("../../data/".to_string()) {
             "../../data".to_string()
+        } else if file_exists("../../../data/".to_string()) {
+            "../../../data".to_string()
         } else {
             panic!("Can't find the data/ directory");
         }
@@ -97,6 +101,7 @@ impl CityName {
         for country in list_all_objects(path("system")) {
             if country == "assets"
                 || country == "extra_fonts"
+                || country == "ltn_proposals"
                 || country == "proposals"
                 || country == "study_areas"
             {
@@ -180,6 +185,13 @@ impl CityName {
             file.as_ref()
         ))
     }
+
+    /// Should metric units be used by default for this map? (Imperial if false)
+    pub fn uses_metric(&self) -> bool {
+        // We don't need a full locale lookup or anything. Myanmar and Liberia apparently use both
+        // but are leaning metric.
+        self.country != "us"
+    }
 }
 
 /// A single map is identified using this.
@@ -199,6 +211,10 @@ impl MapName {
             city: CityName::new(country, city),
             map: map.to_string(),
         }
+    }
+
+    pub fn blank() -> Self {
+        Self::new("zz", "blank city", "blank")
     }
 
     /// Create a MapName from a city and map within that city.
@@ -390,7 +406,7 @@ pub fn path_all_edits(name: &MapName) -> String {
 
 pub fn path_ltn_proposals(name: &MapName, proposal_name: &str) -> String {
     path(format!(
-        "player/ltn_proposals/{}/{}/{}/{}.bin",
+        "player/ltn_proposals/{}/{}/{}/{}.json.gz",
         name.city.country, name.city.city, name.map, proposal_name
     ))
 }

@@ -197,10 +197,10 @@ impl Queue {
 
             // There's spillover and a car shouldn't have been able to enter yet.
             if bound < Distance::ZERO {
-                if let Some(intermediate_results) = intermediate_results {
+                if let Some(intermediate_results) = &mut intermediate_results {
                     dump_cars(intermediate_results, cars, self.id, now);
                 }
-                panic!(
+                println!(
                     "Queue has spillover on {} at {} -- can't draw {:?}, bound is {}. Laggy head is \
                      {:?}. This is usually a geometry bug; check for duplicate roads going \
                      between the same intersections.",

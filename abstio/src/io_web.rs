@@ -21,6 +21,7 @@ static SYSTEM_DATA: include_dir::Dir = include_dir::include_dir!(
     "../data/system",
     "assets/",
     "-assets/music/",
+    "ltn_proposals/",
     "proposals/",
     "study_areas/"
 );
@@ -82,17 +83,18 @@ pub fn list_dir(dir: String) -> Vec<String> {
 
 pub fn slurp_file<I: AsRef<str>>(path: I) -> Result<Vec<u8>> {
     let path = path.as_ref();
-    debug!(
-        "slurping file: {}, trimmed_path: {}",
-        path,
-        path.trim_start_matches("../data/system/")
-    );
 
     if let Some(raw) = SYSTEM_DATA.get_file(path.trim_start_matches("../data/system/")) {
         Ok(raw.contents().to_vec())
     } else if path.starts_with(&path_player("")) {
         let string = read_local_storage(path)?;
-        Ok(string.into_bytes())
+        // TODO Hack: if it probably wasn't written with write_json, do the base64 decoding. This
+        // may not always be appropriate...
+        if path.ends_with(".json") {
+            Ok(string.into_bytes())
+        } else {
+            base64::decode(string).map_err(|err| err.into())
+        }
     } else {
         bail!("Can't slurp_file {}, it doesn't exist", path)
     }
@@ -122,17 +124,23 @@ pub fn write_json<T: Serialize>(path: String, obj: &T) {
 }
 
 pub fn write_binary<T: Serialize>(path: String, obj: &T) {
+    write_raw(path, &abstutil::to_binary(obj)).unwrap();
+}
+
+pub fn write_raw(path: String, bytes: &[u8]) -> Result<()> {
     // Only save for data/player, for now
     if !path.starts_with(&path_player("")) {
-        warn!("Not saving {}", path);
-        return;
+        bail!("Not saving {}", path);
     }
 
     let window = web_sys::window().unwrap();
     let storage = window.local_storage().unwrap().unwrap();
     // Local storage only supports strings, so base64 encoding needed
-    let encoded = base64::encode(abstutil::to_binary(obj));
-    storage.set_item(&path, &encoded).unwrap();
+    let encoded = base64::encode(bytes);
+    storage
+        .set_item(&path, &encoded)
+        .map_err(|err| anyhow!(err.as_string().unwrap_or("set_item failed".to_string())))?;
+    Ok(())
 }
 
 pub fn delete_file<I: AsRef<str>>(path: I) {
@@ -171,4 +179,40 @@ fn list_local_storage_keys() -> Vec<String> {
         keys.push(storage.key(idx).unwrap().unwrap());
     }
     keys
+}
+
+/// Returns path on success
+pub fn write_file(path: String, contents: String) -> Result<String> {
+    // Make the browser prompt the user to save a local file with arbitrary contents.
+    use wasm_bindgen::JsCast;
+
+    let mimetype = if path.ends_with("csv") {
+        "text/csv"
+    } else if path.ends_with("json") {
+        "application/json"
+    } else if path.ends_with("bin") {
+        "application/octet-stream"
+    } else {
+        bail!("Don't know MIME type for {path}");
+    };
+
+    let data: String = js_sys::JsString::from(format!("data:{mimetype};charset=utf-8,"))
+        .concat(&js_sys::encode_uri_component(&contents))
+        .into();
+
+    // TODO Proper error handling
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let node = document
+        .create_element("a")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlElement>()
+        .unwrap();
+    node.set_attribute("href", &data).unwrap();
+    node.set_attribute("download", &path).unwrap();
+    document.body().unwrap().append_child(&node).unwrap();
+    node.click();
+    node.remove();
+
+    Ok(path)
 }

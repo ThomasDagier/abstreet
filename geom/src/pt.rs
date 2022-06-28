@@ -1,6 +1,6 @@
 use std::fmt;
 
-use geo::algorithm::simplify::Simplify;
+use geo::Simplify;
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 
@@ -66,11 +66,8 @@ impl Pt2D {
         self.y
     }
 
-    // TODO better name
+    /// If distance is negative, this projects a point in theta.opposite()
     pub fn project_away(self, dist: Distance, theta: Angle) -> Pt2D {
-        // If negative, caller should use theta.opposite()
-        assert!(dist >= Distance::ZERO);
-
         let (sin, cos) = theta.normalized_radians().sin_cos();
         Pt2D::new(
             self.x() + dist.inner_meters() * cos,
@@ -167,26 +164,26 @@ impl HashablePt2D {
     }
 }
 
-impl From<Pt2D> for geo::Coordinate<f64> {
+impl From<Pt2D> for geo::Coordinate {
     fn from(pt: Pt2D) -> Self {
         geo::Coordinate { x: pt.x, y: pt.y }
     }
 }
 
-impl From<Pt2D> for geo::Point<f64> {
+impl From<Pt2D> for geo::Point {
     fn from(pt: Pt2D) -> Self {
         geo::Point::new(pt.x, pt.y)
     }
 }
 
-impl From<geo::Coordinate<f64>> for Pt2D {
-    fn from(coord: geo::Coordinate<f64>) -> Self {
+impl From<geo::Coordinate> for Pt2D {
+    fn from(coord: geo::Coordinate) -> Self {
         Pt2D::new(coord.x, coord.y)
     }
 }
 
-impl From<geo::Point<f64>> for Pt2D {
-    fn from(point: geo::Point<f64>) -> Self {
+impl From<geo::Point> for Pt2D {
+    fn from(point: geo::Point) -> Self {
         Pt2D::new(point.x(), point.y())
     }
 }

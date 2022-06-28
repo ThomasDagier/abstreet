@@ -6,13 +6,12 @@ extern crate log;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 use abstio::MapName;
 use abstutil::{Tags, Timer};
 use geom::{Distance, FindClosest, GPSBounds, HashablePt2D, LonLat, PolyLine, Polygon, Pt2D, Ring};
-use map_model::raw::{OriginalRoad, RawMap};
-use map_model::{osm, raw, Amenity, MapConfig};
-use serde::{Deserialize, Serialize};
+use raw_map::{osm, Amenity, MapConfig, OriginalRoad, RawMap, RawRoad};
 
 mod clip;
 mod elevation;
@@ -41,6 +40,30 @@ pub struct Options {
     pub filter_crosswalks: bool,
     /// Configure public transit using this URL to a static GTFS feed in .zip format.
     pub gtfs_url: Option<String>,
+    pub elevation: bool,
+}
+
+impl Options {
+    pub fn default_for_side(driving_side: raw_map::DrivingSide) -> Self {
+        Self {
+            map_config: MapConfig {
+                driving_side,
+                bikes_can_use_bus_lanes: true,
+                inferred_sidewalks: true,
+                street_parking_spot_length: Distance::meters(8.0),
+                turn_on_red: true,
+            },
+            onstreet_parking: OnstreetParking::JustOSM,
+            public_offstreet_parking: PublicOffstreetParking::None,
+            private_offstreet_parking: PrivateOffstreetParking::FixedPerBldg(1),
+            include_railroads: true,
+            extra_buildings: None,
+            skip_local_roads: false,
+            filter_crosswalks: false,
+            gtfs_url: None,
+            elevation: false,
+        }
+    }
 }
 
 /// What roads will have on-street parking lanes? Data from
@@ -87,6 +110,9 @@ pub fn convert(
     timer: &mut Timer,
 ) -> RawMap {
     let mut map = RawMap::blank(name);
+    // Do this early. Calculating RawRoads uses DrivingSide, for example!
+    map.config = opts.map_config.clone();
+
     if let Some(ref path) = clip_path {
         let pts = LonLat::read_osmosis_polygon(path).unwrap();
         let gps_bounds = GPSBounds::from(pts.clone());
@@ -106,12 +132,13 @@ pub fn convert(
 
     parking::apply_parking(&mut map, &opts, timer);
 
-    // TODO Make this bail out on failure, after the new dependencies are clearly explained.
-    timer.start("add elevation data");
-    if let Err(err) = elevation::add_data(&mut map) {
-        error!("No elevation data: {}", err);
+    if opts.elevation {
+        timer.start("add elevation data");
+        if let Err(err) = elevation::add_data(&mut map) {
+            error!("No elevation data: {}", err);
+        }
+        timer.stop("add elevation data");
     }
-    timer.stop("add elevation data");
     if let Some(ref path) = opts.extra_buildings {
         add_extra_buildings(&mut map, path).unwrap();
     }
@@ -129,7 +156,9 @@ pub fn convert(
         gtfs::import(&mut map).unwrap();
     }
 
-    map.config = opts.map_config;
+    if map.name == MapName::new("gb", "bristol", "east") {
+        bristol_hack(&mut map);
+    }
     map
 }
 
@@ -162,7 +191,7 @@ fn add_extra_buildings(map: &mut RawMap, path: &str) -> Result<()> {
         // Add these as new buildings, generating a new dummy OSM ID.
         map.buildings.insert(
             osm::OsmID::Way(osm::WayID(id)),
-            raw::RawBuilding {
+            raw_map::RawBuilding {
                 polygon,
                 osm_tags: Tags::empty(),
                 public_garage_name: None,
@@ -198,7 +227,7 @@ fn filter_crosswalks(
         // retained
         if let Some(road) = pt_to_road.get(&pt).and_then(|r| map.roads.get_mut(r)) {
             // TODO Support cul-de-sacs and other loop roads
-            if let Ok(pl) = PolyLine::new(road.center_points.clone()) {
+            if let Ok(pl) = PolyLine::new(road.osm_center_points.clone()) {
                 // Crossings aren't right at an intersection. Where is this point along the center
                 // line?
                 if let Some((dist, _)) = pl.dist_along_of_point(pt.to_pt2d()) {
@@ -220,4 +249,34 @@ fn filter_crosswalks(
             }
         }
     }
+}
+
+// We're using Bristol for a project that requires an unusual LTN neighborhood boundary. Insert a
+// fake road where a bridge crosses another road, to force blockfinding to trace along there.
+fn bristol_hack(map: &mut RawMap) {
+    let osm_way_id = map.new_osm_way_id(-1);
+    let i1 = osm::NodeID(364061012);
+    let i2 = osm::NodeID(1215755208);
+    let id = OriginalRoad { osm_way_id, i1, i2 };
+    let mut tags = Tags::empty();
+    tags.insert("highway", "service");
+    tags.insert("name", "Fake road");
+    tags.insert("oneway", "yes");
+    tags.insert("sidewalk", "none");
+    tags.insert("lanes", "1");
+    // TODO The LTN pathfinding tool will try to use this road. Discourage that heavily. It'd be
+    // safer to mark this as under construction, but then blockfinding wouldn't treat it as a
+    // boundary.
+    tags.insert("maxspeed", "1 mph");
+    tags.insert("bicycle", "no");
+
+    map.roads.insert(
+        id,
+        RawRoad::new(
+            vec![map.intersections[&i1].point, map.intersections[&i2].point],
+            tags,
+            &map.config,
+        )
+        .unwrap(),
+    );
 }

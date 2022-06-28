@@ -2,7 +2,7 @@ use abstutil::prettyprint_usize;
 use geom::{Distance, Histogram, Statistic};
 use map_model::{IntersectionID, RoadID};
 use synthpop::TrafficCounts;
-use widgetry::mapspace::{ObjectID, ToggleZoomed, ToggleZoomedBuilder, World};
+use widgetry::mapspace::{ObjectID, ToggleZoomed, ToggleZoomedBuilder, World, WorldOutcome};
 use widgetry::{Color, EventCtx, GeomBatch, GfxCtx, Key, Line, Text, TextExt, Widget};
 
 use crate::tools::{cmp_count, ColorNetwork, DivergingScale};
@@ -39,6 +39,7 @@ impl CompareCounts {
         counts_a: TrafficCounts,
         counts_b: TrafficCounts,
         layer: Layer,
+        clickable_roads: bool,
     ) -> CompareCounts {
         let heatmap_a = calculate_heatmap(ctx, app, counts_a.clone());
         let heatmap_b = calculate_heatmap(ctx, app, counts_b.clone());
@@ -46,7 +47,7 @@ impl CompareCounts {
 
         CompareCounts {
             layer,
-            world: make_world(ctx, app),
+            world: make_world(ctx, app, clickable_roads),
             counts_a,
             heatmap_a,
             counts_b,
@@ -117,7 +118,7 @@ impl CompareCounts {
         .section(ctx)
     }
 
-    pub fn draw(&self, g: &mut GfxCtx) {
+    pub fn draw(&self, g: &mut GfxCtx, app: &dyn AppLike) {
         match self.layer {
             Layer::A => {
                 self.heatmap_a.draw(g);
@@ -137,7 +138,7 @@ impl CompareCounts {
                     Layer::A => self.counts_a.per_road.get(r),
                     Layer::B => self.counts_b.per_road.get(r),
                     Layer::Compare => {
-                        g.draw_mouse_tooltip(self.relative_road_tooltip(r));
+                        g.draw_mouse_tooltip(self.relative_road_tooltip(app, r));
                         return;
                     }
                 },
@@ -153,12 +154,13 @@ impl CompareCounts {
         }
     }
 
-    fn relative_road_tooltip(&self, r: RoadID) -> Text {
+    fn relative_road_tooltip(&self, app: &dyn AppLike, r: RoadID) -> Text {
         let a = self.counts_a.per_road.get(r);
         let b = self.counts_b.per_road.get(r);
         let ratio = (b as f64) / (a as f64);
 
         let mut txt = Text::from_multiline(vec![
+            Line(app.map().get_r(r).get_name(app.opts().language.as_ref())),
             Line(format!(
                 "{}: {}",
                 self.counts_a.description,
@@ -178,9 +180,12 @@ impl CompareCounts {
         txt
     }
 
-    pub fn other_event(&mut self, ctx: &mut EventCtx) {
-        // Just trigger hovering
-        let _ = self.world.event(ctx);
+    /// If clickable_roads was enabled and a road was clicked, this returns the ID.
+    pub fn other_event(&mut self, ctx: &mut EventCtx) -> Option<RoadID> {
+        match self.world.event(ctx) {
+            WorldOutcome::ClickedObject(Obj::Road(r)) => Some(r),
+            _ => None,
+        }
     }
 
     /// If a button owned by this was clicked, returns the new widget to replace
@@ -238,8 +243,7 @@ fn calculate_relative_heatmap(
     info!("Physical road widths: {}", hgram_width.describe());
 
     // TODO This is still a bit arbitrary
-    let scale = DivergingScale::new(Color::hex("#5D9630"), Color::WHITE, Color::hex("#A32015"))
-        .range(0.0, 2.0);
+    let scale = DivergingScale::new(Color::GREEN, Color::grey(0.2), Color::RED).range(0.0, 2.0);
 
     // Draw road width based on the count before
     // TODO unwrap will crash on an empty demand model
@@ -262,14 +266,14 @@ fn calculate_relative_heatmap(
             (before - min_count) as f64 / (max_count - min_count) as f64
         };
         // TODO Pretty arbitrary. Ideally we'd hide roads and intersections underneath...
-        let width = Distance::meters(2.0) + pct_count * Distance::meters(10.0);
+        let width = Distance::meters(6.0) + pct_count * Distance::meters(15.0);
 
         draw_roads.push(color, app.map().get_r(r).center_pts.make_polygons(width));
     }
     ToggleZoomedBuilder::from(draw_roads).build(ctx)
 }
 
-fn make_world(ctx: &mut EventCtx, app: &dyn AppLike) -> World<Obj> {
+fn make_world(ctx: &mut EventCtx, app: &dyn AppLike, clickable_roads: bool) -> World<Obj> {
     let mut world = World::bounded(app.map().get_bounds());
     for r in app.map().all_roads() {
         world
@@ -277,6 +281,7 @@ fn make_world(ctx: &mut EventCtx, app: &dyn AppLike) -> World<Obj> {
             .hitbox(r.get_thick_polygon())
             .drawn_in_master_batch()
             .invisibly_hoverable()
+            .set_clickable(clickable_roads)
             .build(ctx);
     }
     for i in app.map().all_intersections() {

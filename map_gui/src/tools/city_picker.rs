@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use abstio::{CityName, Manifest, MapName};
 use geom::{Distance, Percent};
 use map_model::City;
+use widgetry::tools::FileLoader;
 use widgetry::{
     lctrl, Autocomplete, ClickOutcome, ControlState, DrawBaselayer, DrawWithTooltips, EventCtx,
-    GeomBatch, GfxCtx, Image, Key, Line, Outcome, Panel, RewriteColor, State, Text, TextExt,
-    Transition, Widget,
+    GeomBatch, GfxCtx, Image, Key, Line, Outcome, Panel, PanelDims, RewriteColor, State, Text,
+    TextExt, Transition, Widget,
 };
 
-use crate::load::{FileLoader, MapLoader};
+use crate::load::MapLoader;
 use crate::render::DrawArea;
 use crate::tools::{grey_out_map, nice_country_name, nice_map_name};
 use crate::AppLike;
@@ -153,10 +154,17 @@ impl<A: AppLike + 'static> CityPicker<A> {
                         } else {
                             // On native this shows the "import" instructions modal within
                             // the app
-                            ctx.style()
-                                .btn_outline
-                                .text("Import a new city into A/B Street")
-                                .build_widget(ctx, "import new city")
+                            Widget::row(vec![
+                                ctx.style()
+                                    .btn_outline
+                                    .text("Import a new city into A/B Street")
+                                    .build_widget(ctx, "import new city"),
+                                ctx.style()
+                                    .btn_outline
+                                    .text("Re-import this map with latest OpenStreetMap data")
+                                    .tooltip("OSM edits take a few minutes to appear in Overpass. Note this will create a new copy of the map, not overwrite the original.")
+                                    .build_widget(ctx, "re-import this city"),
+                            ])
                         },
                         ctx.style()
                             .btn_outline
@@ -178,6 +186,12 @@ impl<A: AppLike + 'static> CityPicker<A> {
 
 impl<A: AppLike + 'static> State<A> for CityPicker<A> {
     fn event(&mut self, ctx: &mut EventCtx, app: &mut A) -> Transition<A> {
+        // TODO This happens if we prompt the user to download something, but they cancel. At that
+        // point, we've lost the callback, so for now, just totally bail out.
+        if self.on_load.is_none() {
+            return Transition::Pop;
+        }
+
         match self.panel.event(ctx) {
             Outcome::Clicked(x) => match x.as_ref() {
                 "close" => {
@@ -192,7 +206,7 @@ impl<A: AppLike + 'static> State<A> for CityPicker<A> {
                 "import new city" => {
                     #[cfg(target_arch = "wasm32")]
                     {
-                        crate::tools::open_browser(
+                        widgetry::tools::open_browser(
                             "https://a-b-street.github.io/docs/user/new_city.html",
                         );
                     }
@@ -202,6 +216,16 @@ impl<A: AppLike + 'static> State<A> for CityPicker<A> {
                             ctx,
                             self.on_load.take().unwrap(),
                         ));
+                    }
+                }
+                "re-import this city" => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        unreachable!()
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        return reimport_city(ctx, app);
                     }
                 }
                 x => {
@@ -249,17 +273,7 @@ impl<A: AppLike + 'static> AllCityPicker<A> {
         on_load: Box<dyn FnOnce(&mut EventCtx, &mut A) -> Transition<A>>,
     ) -> Box<dyn State<A>> {
         let mut autocomplete_entries = Vec::new();
-        let mut buttons = Vec::new();
-
         for name in MapName::list_all_maps_merged(&Manifest::load()) {
-            buttons.push(
-                ctx.style()
-                    .btn_outline
-                    .text(name.describe())
-                    .build_widget(ctx, &name.path())
-                    .margin_right(10)
-                    .margin_below(10),
-            );
             autocomplete_entries.push((name.describe(), name.path()));
         }
 
@@ -275,9 +289,9 @@ impl<A: AppLike + 'static> AllCityPicker<A> {
                     Autocomplete::new_widget(ctx, autocomplete_entries, 10).named("search"),
                 ])
                 .padding(8),
-                Widget::custom_row(buttons).flex_wrap(ctx, Percent::int(70)),
             ]))
-            .exact_size_percent(80, 80)
+            .dims_width(PanelDims::ExactPercent(0.8))
+            .dims_height(PanelDims::ExactPercent(0.8))
             .build(ctx),
         })
     }
@@ -285,19 +299,17 @@ impl<A: AppLike + 'static> AllCityPicker<A> {
 
 impl<A: AppLike + 'static> State<A> for AllCityPicker<A> {
     fn event(&mut self, ctx: &mut EventCtx, app: &mut A) -> Transition<A> {
+        // Same as CityPicker
+        if self.on_load.is_none() {
+            return Transition::Pop;
+        }
+
         if let Outcome::Clicked(x) = self.panel.event(ctx) {
             match x.as_ref() {
                 "close" => {
                     return Transition::Pop;
                 }
-                path => {
-                    return chose_city(
-                        ctx,
-                        app,
-                        MapName::from_path(path).unwrap(),
-                        &mut self.on_load,
-                    );
-                }
+                _ => unreachable!(),
             }
         }
         if let Some(mut paths) = self.panel.autocomplete_done::<String>("search") {
@@ -403,7 +415,8 @@ impl<A: AppLike + 'static> CitiesInCountryPicker<A> {
         Box::new(CitiesInCountryPicker {
             on_load: Some(on_load),
             panel: Panel::new_builder(Widget::col(col))
-                .exact_size_percent(80, 80)
+                .dims_width(PanelDims::ExactPercent(0.8))
+                .dims_height(PanelDims::ExactPercent(0.8))
                 .build(ctx),
         })
     }
@@ -411,6 +424,11 @@ impl<A: AppLike + 'static> CitiesInCountryPicker<A> {
 
 impl<A: AppLike + 'static> State<A> for CitiesInCountryPicker<A> {
     fn event(&mut self, ctx: &mut EventCtx, app: &mut A) -> Transition<A> {
+        // Same as CityPicker
+        if self.on_load.is_none() {
+            return Transition::Pop;
+        }
+
         if let Outcome::Clicked(x) = self.panel.event(ctx) {
             match x.as_ref() {
                 "close" => {
@@ -440,6 +458,7 @@ impl<A: AppLike + 'static> State<A> for CitiesInCountryPicker<A> {
                             return crate::tools::prompt_to_download_missing_data(
                                 ctx,
                                 maps.pop().unwrap(),
+                                self.on_load.take().unwrap(),
                             );
                         }
                     }
@@ -486,7 +505,14 @@ fn chose_city<A: AppLike + 'static>(
     #[cfg(not(target_arch = "wasm32"))]
     {
         if !abstio::file_exists(name.path()) {
-            return crate::tools::prompt_to_download_missing_data(ctx, name);
+            let on_load = on_load.take().unwrap();
+            return crate::tools::prompt_to_download_missing_data(
+                ctx,
+                name.clone(),
+                Box::new(move |ctx, app| {
+                    Transition::Replace(MapLoader::new_state(ctx, app, name, on_load))
+                }),
+            );
         }
     }
 
@@ -496,4 +522,62 @@ fn chose_city<A: AppLike + 'static>(
         name,
         on_load.take().unwrap(),
     ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn reimport_city<A: AppLike + 'static>(ctx: &mut EventCtx, app: &A) -> Transition<A> {
+    use geojson::{Feature, FeatureCollection, GeoJson};
+
+    let name = format!("updated_{}", app.map().get_name().as_filename());
+
+    let mut args = vec![
+        crate::tools::find_exe("cli"),
+        "one-step-import".to_string(),
+        "--geojson-path=boundary.json".to_string(),
+        format!("--map-name={}", name),
+    ];
+    if app.map().get_config().driving_side == map_model::DrivingSide::Left {
+        args.push("--drive-on-left".to_string());
+    }
+
+    // Write the current map boundary
+    abstio::write_json(
+        "boundary.json".to_string(),
+        &GeoJson::from(FeatureCollection {
+            bbox: None,
+            foreign_members: None,
+            features: vec![Feature {
+                bbox: None,
+                id: None,
+                properties: None,
+                foreign_members: None,
+                geometry: Some(
+                    app.map()
+                        .get_boundary_polygon()
+                        .to_geojson(Some(app.map().get_gps_bounds())),
+                ),
+            }],
+        }),
+    );
+
+    return Transition::Push(crate::tools::RunCommand::new_state(
+        ctx,
+        true,
+        args,
+        Box::new(|_, _, success, _| {
+            if success {
+                abstio::delete_file("boundary.json");
+
+                Transition::ConsumeState(Box::new(move |state, ctx, app| {
+                    let mut state = state.downcast::<CityPicker<A>>().ok().unwrap();
+                    let on_load = state.on_load.take().unwrap();
+                    let map_name = MapName::new("zz", "oneshot", &name);
+                    vec![MapLoader::new_state(ctx, app, map_name, on_load)]
+                }))
+            } else {
+                // The popup already explained the failure
+                Transition::Keep
+            }
+        }),
+    ));
 }

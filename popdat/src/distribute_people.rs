@@ -1,4 +1,4 @@
-use geo::algorithm::{area::Area, contains::Contains};
+use geo::{Area, BooleanOps, Contains};
 use rand::Rng;
 use rand_xorshift::XorShiftRng;
 
@@ -36,7 +36,7 @@ pub fn assign_people_to_houses(
 /// to residential buildings within that area. Returns a list of homes with the number of residents
 /// in each.
 pub fn distribute_population_to_homes(
-    polygon: geo::Polygon<f64>,
+    polygon: geo::Polygon,
     population: usize,
     map: &Map,
     rng: &mut XorShiftRng,
@@ -53,7 +53,6 @@ pub fn distribute_population_to_homes(
 
     // If the area is partly out-of-bounds, then scale down the number of residents linearly
     // based on area of the overlapping part of the polygon.
-    use geo_booleanop::boolean::BooleanOp;
     let pct_overlap = polygon.intersection(&map_boundary).unsigned_area() / polygon.unsigned_area();
     let num_residents = (pct_overlap * (population as f64)) as usize;
     debug!(

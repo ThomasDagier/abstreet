@@ -7,10 +7,9 @@ use serde::{Deserialize, Serialize};
 use abstutil::wraparound_get;
 use geom::{Polygon, Pt2D, Ring};
 
-use crate::{CommonEndpoint, Direction, LaneID, Map, RoadID, RoadSideID, SideOfRoad};
-
-// See https://github.com/a-b-street/abstreet/issues/841. Slow but correct when enabled.
-const LOSSLESS_BLOCKFINDING: bool = true;
+use crate::{
+    CommonEndpoint, Direction, LaneID, Map, PathConstraints, RoadID, RoadSideID, SideOfRoad,
+};
 
 /// A block is defined by a perimeter that traces along the sides of roads. Inside the perimeter,
 /// the block may contain buildings and interior roads. In the simple case, a block represents a
@@ -123,15 +122,17 @@ impl Perimeter {
         perimeters
     }
 
-    /// Trying to form blocks near railways or cycleways that involve bridges/tunnels often causes
-    /// overlapping geometry or blocks that're way too large. These are extremely imperfect
-    /// heuristics to avoid the worst problems.
+    /// Blockfinding is specialized for the LTN tool, so non-driveable roads (cycleways and light
+    /// rail) are considered invisible and can't be on a perimeter. Previously, there were also
+    /// some heuristics here to try to skip certain bridges/tunnels that break the planarity of
+    /// blocks.
     pub fn find_roads_to_skip_tracing(map: &Map) -> HashSet<RoadID> {
         let mut skip = HashSet::new();
         for r in map.all_roads() {
+            // TODO Redundant
             if r.is_light_rail() {
                 skip.insert(r.id);
-            } else if r.is_cycleway() && r.zorder != 0 {
+            } else if !PathConstraints::Car.can_use_road(r, map) {
                 skip.insert(r.id);
             }
         }
@@ -159,7 +160,13 @@ impl Perimeter {
     /// TODO Due to https://github.com/a-b-street/abstreet/issues/841, it seems like rotation
     /// sometimes breaks `to_block`, so for now, always revert to the original upon failure.
     // TODO Would it be cleaner to return a Result here and always restore the invariant?
-    fn try_to_merge(&mut self, map: &Map, other: &mut Perimeter, debug_failures: bool) -> bool {
+    fn try_to_merge(
+        &mut self,
+        map: &Map,
+        other: &mut Perimeter,
+        debug_failures: bool,
+        use_expensive_blockfinding: bool,
+    ) -> bool {
         let orig_self = self.clone();
         let orig_other = other.clone();
 
@@ -199,6 +206,14 @@ impl Perimeter {
 
         if debug_failures {
             println!("\nCommon: {:?}\n{:?}\n{:?}", common, self, other);
+        }
+
+        if self.reverse_to_fix_winding_order(map, other) {
+            // Revert, reverse one, and try again. This should never recurse.
+            self.restore_invariant();
+            other.restore_invariant();
+            self.roads.reverse();
+            return self.try_to_merge(map, other, debug_failures, use_expensive_blockfinding);
         }
 
         // Check if all of the common roads are at the end of each perimeter,
@@ -264,9 +279,20 @@ impl Perimeter {
         // Make sure we didn't wind up with any internal dead-ends
         self.collapse_deadends();
 
-        // TODO This is an expensive sanity check needed for
+        // TODO Something in this method is buggy and produces invalid merges.
         // https://github.com/a-b-street/abstreet/issues/841
-        if LOSSLESS_BLOCKFINDING && self.clone().to_block(map).is_err() {
+        // First try a lightweight detection for problems. If the caller detects the net result is
+        // invalid, they'll override this flag and try again.
+        let err = if use_expensive_blockfinding {
+            self.clone().to_block(map).err()
+        } else {
+            self.check_continuity(map).err()
+        };
+        if let Some(err) = err {
+            debug!(
+                "A merged perimeter couldn't be blockified: {}. {:?}",
+                err, self
+            );
             *self = orig_self;
             *other = orig_other;
             return false;
@@ -275,10 +301,67 @@ impl Perimeter {
         true
     }
 
+    fn check_continuity(&self, map: &Map) -> Result<()> {
+        for pair in self.roads.windows(2) {
+            let r1 = map.get_r(pair[0].road);
+            let r2 = map.get_r(pair[1].road);
+            if r1.common_endpoint(r2) == CommonEndpoint::None {
+                bail!("Part of the perimeter goes from {:?} to {:?}, but they don't share a common endpoint", pair[0], pair[1]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Should we reverse one perimeter to match the winding order?
+    ///
+    /// This is only meant to be called in the middle of try_to_merge. It assumes both perimeters
+    /// have already been rotated so the common roads are at the end. The invariant of first=last
+    /// is not true.
+    fn reverse_to_fix_winding_order(&self, map: &Map, other: &Perimeter) -> bool {
+        // Using geometry to determine winding order is brittle. Look for any common road, and see
+        // where it points.
+        let common_example = self.roads.last().unwrap().road;
+        let last_common_for_self = match map
+            .get_r(common_example)
+            .common_endpoint(map.get_r(wraparound_get(&self.roads, self.roads.len() as isize).road))
+        {
+            CommonEndpoint::One(i) => i,
+            CommonEndpoint::Both => {
+                // If the common road is a loop on the intersection, then this perimeter must be of
+                // length 2 (or 3 with the invariant), and reversing it is meaningless.
+                return false;
+            }
+            CommonEndpoint::None => unreachable!(),
+        };
+
+        // Find the same road in the other perimeter
+        let other_idx = other
+            .roads
+            .iter()
+            .position(|x| x.road == common_example)
+            .unwrap() as isize;
+        let last_common_for_other = match map
+            .get_r(common_example)
+            .common_endpoint(map.get_r(wraparound_get(&other.roads, other_idx + 1).road))
+        {
+            CommonEndpoint::One(i) => i,
+            CommonEndpoint::Both => {
+                return false;
+            }
+            CommonEndpoint::None => unreachable!(),
+        };
+        last_common_for_self == last_common_for_other
+    }
+
     /// Try to merge all given perimeters. If successful, only one perimeter will be returned.
     /// Perimeters are never "destroyed" -- if not merged, they'll appear in the results. If
     /// `stepwise_debug` is true, returns after performing just one merge.
-    pub fn merge_all(map: &Map, mut input: Vec<Perimeter>, stepwise_debug: bool) -> Vec<Perimeter> {
+    pub fn merge_all(
+        map: &Map,
+        mut input: Vec<Perimeter>,
+        stepwise_debug: bool,
+        use_expensive_blockfinding: bool,
+    ) -> Vec<Perimeter> {
         // Internal dead-ends break merging, so first collapse of those. Do this before even
         // looking for neighbors, since find_common_roads doesn't understand dead-ends.
         for p in &mut input {
@@ -296,7 +379,12 @@ impl Perimeter {
                 }
 
                 for other in &mut results {
-                    if other.try_to_merge(map, &mut perimeter, stepwise_debug) {
+                    if other.try_to_merge(
+                        map,
+                        &mut perimeter,
+                        stepwise_debug,
+                        use_expensive_blockfinding,
+                    ) {
                         // To debug, return after any single change
                         debug = stepwise_debug;
                         continue 'INPUT;
@@ -526,7 +614,7 @@ impl Perimeter {
                 if let Some(ring) = prev_i.polygon.get_outer_ring() {
                     if !ring.doubles_back() {
                         // At dead-ends, trace around the intersection on the longer side
-                        let longer = prev_i.is_deadend();
+                        let longer = prev_i.is_deadend_for_driving(map);
                         if let Some(slice) = ring.get_slice_between(*last_pt, pl.first_pt(), longer)
                         {
                             pts.extend(slice.into_points());
@@ -542,7 +630,7 @@ impl Perimeter {
         let first_intersection = map.get_i(first_intersection.unwrap());
         if let Some(ring) = first_intersection.polygon.get_outer_ring() {
             if !ring.doubles_back() {
-                let longer = first_intersection.is_deadend();
+                let longer = first_intersection.is_deadend_for_driving(map);
                 if let Some(slice) = ring.get_slice_between(*pts.last().unwrap(), pts[0], longer) {
                     pts.extend(slice.into_points());
                 }
@@ -567,6 +655,14 @@ impl Perimeter {
             .roads
             .iter()
             .all(|id| self.interior.contains(&id.road) || self.roads.contains(id))
+    }
+
+    /// Shrinks or expands the perimeter by tracing the opposite side of the road.
+    pub fn flip_side_of_road(mut self) -> Self {
+        for road_side in &mut self.roads {
+            *road_side = road_side.other_side();
+        }
+        self
     }
 }
 

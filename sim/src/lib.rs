@@ -34,7 +34,7 @@ pub use crate::render::{
     UnzoomedAgent,
 };
 
-pub use self::analytics::{Analytics, Problem, SlidingWindow, TripPhase};
+pub use self::analytics::{Analytics, Problem, ProblemType, SlidingWindow, TripPhase};
 pub(crate) use self::events::Event;
 pub use self::events::{AlertLocation, TripPhaseType};
 pub use self::make::{fork_rng, BorderSpawnOverTime, ScenarioGenerator, SimFlags, SpawnOverTime};
@@ -43,6 +43,7 @@ pub(crate) use self::mechanics::{
     DrivingSimState, IntersectionSimState, ParkingSim, ParkingSimState, WalkingSimState,
 };
 pub(crate) use self::pandemic::PandemicModel;
+pub use self::prebake::PrebakeSummary;
 pub(crate) use self::recorder::TrafficRecorder;
 pub(crate) use self::router::{ActionAtEnd, Router};
 pub(crate) use self::scheduler::{Command, Scheduler};
@@ -59,6 +60,7 @@ mod events;
 mod make;
 mod mechanics;
 mod pandemic;
+pub mod prebake;
 mod recorder;
 mod render;
 mod router;
@@ -166,6 +168,10 @@ impl AgentID {
             AgentID::Car(c) => c.id == id,
             _ => false,
         }
+    }
+
+    pub(crate) fn is_pedestrian(&self) -> bool {
+        matches!(self, AgentID::Pedestrian(_))
     }
 }
 
@@ -600,4 +606,8 @@ impl CreateCar {
             maybe_route: None,
         }
     }
+}
+
+pub fn pedestrian_body_radius() -> Distance {
+    map_model::SIDEWALK_THICKNESS / 4.0
 }

@@ -1,8 +1,8 @@
+use widgetry::tools::{open_browser, PopupMsg, URLManager};
 use widgetry::{
     EventCtx, Image, Key, Line, Panel, RewriteColor, SimpleState, State, Transition, Widget,
 };
 
-use crate::tools::{open_browser, PopupMsg, URLManager};
 use crate::AppLike;
 
 /// A title screen shared among all of the A/B Street apps.
