@@ -1335,7 +1335,7 @@ stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station,routes
 8592946-3,"Machéry",46.24431514897529,6.128806509114535,,,"50,53,53,NT (50 (Versoix-Centre sportif),53 (Grand-Saconnex-Place/Valavran),53 (Grand-Saconnex-Place/Valavran),NT (Bogis-Bossey))"
 8593043-2,"Duret",46.18716506840705,6.104574041962425,,,"02 (02 (Genève-Plage))"
 8592862-2,"Molard",46.20304373615029,6.147343362552253,,,"36,12,NC,NK,NJ,NV,07,NP,02,10,17 (36 (Place de Neuve),12 (Moillesulaz),NC (Vernier-Village/La Plaine-Gare),NK (Jussy-Meurets/Monniaz-Hameau),NJ (Rive),NV (Moillesulaz),07 (Bout-du-Monde),NP (Anières-Mairie),02 (Genève-Plage),10 (Rive),17 (Annemasse-Parc Montessuit))"
-8592887-2,"Pont-d'Arve",46.194986670992904,6.143422172743754,,,"12,18 (12 (Lancy-Bachet-Gare),18 (Pontets))"
+8592887-2,"Pont-d'Arve",46.1948931983953,6.143354347369987,,,"12,18 (12 (Lancy-Bachet-Gare),18 (Pontets))"
 8592771-2,"Malval-Hameau",46.21081265938499,5.989028680759718,,,"74 (74 (Russin-Village))"
 8587071-4,"Pallanterie",46.24796076371876,6.216585268375033,,,"G,G+ (G (Veigy-Douane/Veigy-Village),G+ (Veigy-Douane))"
 8592778-4,"Amandolier",46.20001793362316,6.168639700219437,,,"12,NK,17 (12 (Moillesulaz),NK (Jussy-Meurets/Monniaz-Hameau),17 (Annemasse-Parc Montessuit))"
